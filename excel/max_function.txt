@@ -9,3 +9,16 @@
     filtered, FILTER(numbers, (numbers >= 0) * (numbers <= 100)),
     MAX(IFERROR(filtered, 0))
 )
+
+
+=MAX(IFERROR(FILTER(--TEXTSPLIT(A1, TEXTSPLIT(A1, SEQUENCE(10,,0), , TRUE), 
+    (--TEXTSPLIT(A1, TEXTSPLIT(A1, SEQUENCE(10,,0), , TRUE) < 185) * 
+    (--TEXTSPLIT(A1, TEXTSPLIT(A1, SEQUENCE(10,,0), , TRUE) >= 0)), 0)
+
+
+=MAX(IFERROR(--TEXTSPLIT(TEXTJOIN("|", TRUE, 
+   IF(ISNUMBER(--MID(A1, SEQUENCE(LEN(A1)), 1)), 
+   MID(A1, SEQUENCE(LEN(A1)), 1), "|")), "|"), ""), 0)
+   * (--TEXTSPLIT(TEXTJOIN("|", TRUE, 
+   IF(ISNUMBER(--MID(A1, SEQUENCE(LEN(A1)), 1)), 
+   MID(A1, SEQUENCE(LEN(A1)), 1), "|"), "") < 185))
