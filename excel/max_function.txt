@@ -12,3 +12,14 @@
   valid, FILTER(--nums, ISNUMBER(--nums)*(--nums>=0)*(--nums<=100)),
   IFERROR(MAX(valid), 0)
 )
+
+
+=LET(
+  x, A2,
+  single, IF(ISNUMBER(--x), --x, NA()),
+  chars, MID(x, SEQUENCE(LEN(x)), 1),
+  txt, TEXTJOIN(" ",,IF(ISNUMBER(--chars), chars, " ")),
+  nums, TEXTSPLIT(TRIM(txt), " "),
+  valid, FILTER(--nums, (ISNUMBER(--nums)) * (--nums >= 0) * (--nums <= 100)),
+  IF(ISNUMBER(single), single, IFERROR(MAX(valid), 0))
+)
