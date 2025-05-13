@@ -16,9 +16,17 @@
     (--TEXTSPLIT(A1, TEXTSPLIT(A1, SEQUENCE(10,,0), , TRUE) >= 0)), 0)
 
 
-=MAX(IFERROR(--TEXTSPLIT(TEXTJOIN("|", TRUE, 
-   IF(ISNUMBER(--MID(A1, SEQUENCE(LEN(A1)), 1)), 
-   MID(A1, SEQUENCE(LEN(A1)), 1), "|")), "|"), ""), 0)
-   * (--TEXTSPLIT(TEXTJOIN("|", TRUE, 
-   IF(ISNUMBER(--MID(A1, SEQUENCE(LEN(A1)), 1)), 
-   MID(A1, SEQUENCE(LEN(A1)), 1), "|"), "") < 185))
+=LET(
+    text, A1,
+    seq, SEQUENCE(LEN(text)),
+    chars, MID(text, seq, 1),
+    is_num, ISNUMBER(--chars),
+    groups, SCAN(0, is_num, LAMBDA(a,b, IF(b, a+1, 0))),
+    max_len, MAX(groups),
+    starts, FILTER(seq, groups=1),
+    nums, IF(max_len=0, 0,
+        DROP(REDUCE("", starts, LAMBDA(a,i,
+            VSTACK(a, --MID(text, i, max_len)))), 1)),
+    valid_nums, FILTER(nums, (nums < 185) * (nums >= 0)),
+    MAX(IFERROR(valid_nums, 0))
+)
