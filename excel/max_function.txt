@@ -67,3 +67,10 @@
     // Return the highest valid number (or 0 if none)
     MAX(IFERROR(valid_numbers, 0))
 )
+
+=MAX(IFERROR(--TEXTSPLIT(TEXTJOIN(",", TRUE, 
+   IF(ISNUMBER(--MID(A1, SEQUENCE(LEN(A1)), 1)), 
+   MID(A1, SEQUENCE(LEN(A1)), 1), ",")), "") * 
+   (--TEXTSPLIT(TEXTJOIN(",", TRUE, 
+   IF(ISNUMBER(--MID(A1, SEQUENCE(LEN(A1)), 1)), 
+   MID(A1, SEQUENCE(LEN(A1)), 1), ","), "") < 185), 0)
