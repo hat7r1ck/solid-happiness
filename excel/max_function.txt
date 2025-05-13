@@ -30,3 +30,17 @@
     valid_nums, FILTER(nums, (nums < 185) * (nums >= 0)),
     MAX(IFERROR(valid_nums, 0))
 )
+
+
+=LET(
+    text, SUBSTITUTE(SUBSTITUTE(A1, CHAR(160), " "),  // Remove hidden spaces
+    len, LEN(text),
+    chars, MID(text, SEQUENCE(len), 1),
+    is_num, ISNUMBER(--chars),
+    group_id, SCAN(0, is_num, LAMBDA(a,b, IF(b, a+1, 0))),
+    max_group, MAX(group_id),
+    starts, FILTER(SEQUENCE(len), group_id=1),
+    nums, IF(max_group=0, {0},
+        --MID(text, starts, max_group)),
+    valid_nums, FILTER(nums, (nums < 185) * (nums >= 0)),
+    MAX(IFERROR(valid_nums, 0))
