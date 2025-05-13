@@ -1,0 +1,11 @@
+=LET(
+    input, A1,
+    len, LEN(input),
+    chars, MID(input, SEQUENCE(len), 1),
+    replace, IF(ISNUMBER(--chars), chars, ","),
+    modified, TEXTJOIN("", TRUE, replace),
+    split, TEXTSPLIT(modified, , ","),
+    numbers, --split,
+    filtered, FILTER(numbers, (numbers >= 0) * (numbers <= 100)),
+    MAX(IFERROR(filtered, 0))
+)
