@@ -1,25 +1,8 @@
 =LET(
-    clean_text, SUBSTITUTE(SUBSTITUTE(A1, CHAR(160), " "), 
-    num_string, TEXTJOIN(",", TRUE, IF(ISNUMBER(--MID(clean_text, SEQUENCE(LEN(clean_text)), 1)), 
-        MID(clean_text, SEQUENCE(LEN(clean_text)), 1), "")),
-    MAX(IFERROR(FILTERXML("<x><y>" & SUBSTITUTE(num_string, ",", "</y><y>") & "</y></x>", "//y[. < 185]"), 0))
-)
-
-
-=LET(
   txt, A2,
-  nums, TEXTSPLIT(TEXTJOIN(" ",,IFERROR(MID(txt,SEQUENCE(LEN(txt)),1)*1," ")), " "),
-  valid, FILTER(--nums, ISNUMBER(--nums)*(--nums>=0)*(--nums<=100)),
-  IFERROR(MAX(valid), 0)
-)
-
-
-=LET(
-  x, A2,
-  single, IF(ISNUMBER(--x), --x, NA()),
-  chars, MID(x, SEQUENCE(LEN(x)), 1),
-  txt, TEXTJOIN(" ",,IF(ISNUMBER(--chars), chars, " ")),
-  nums, TEXTSPLIT(TRIM(txt), " "),
+  pattern, "\d+",
+  all, TEXTJOIN(" ",,TEXTREGEX(txt, pattern)),
+  nums, TEXTSPLIT(all, " "),
   valid, FILTER(--nums, (ISNUMBER(--nums)) * (--nums >= 0) * (--nums <= 100)),
-  IF(ISNUMBER(single), single, IFERROR(MAX(valid), 0))
+  IFERROR(MAX(valid), 0)
 )
