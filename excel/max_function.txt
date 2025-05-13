@@ -4,3 +4,11 @@
         MID(clean_text, SEQUENCE(LEN(clean_text)), 1), "")),
     MAX(IFERROR(FILTERXML("<x><y>" & SUBSTITUTE(num_string, ",", "</y><y>") & "</y></x>", "//y[. < 185]"), 0))
 )
+
+
+=LET(
+  txt, A2,
+  nums, TEXTSPLIT(TEXTJOIN(" ",,IFERROR(MID(txt,SEQUENCE(LEN(txt)),1)*1," ")), " "),
+  valid, FILTER(--nums, ISNUMBER(--nums)*(--nums>=0)*(--nums<=100)),
+  IFERROR(MAX(valid), 0)
+)
