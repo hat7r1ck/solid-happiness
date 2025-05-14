@@ -1,8 +1,16 @@
 =LET(
-  txt, A2,
-  pattern, "\d+",
-  all, TEXTJOIN(" ",,TEXTREGEX(txt, pattern)),
-  nums, TEXTSPLIT(all, " "),
-  valid, FILTER(--nums, (ISNUMBER(--nums)) * (--nums >= 0) * (--nums <= 100)),
-  IFERROR(MAX(valid), 0)
+  x, A2,
+  l, LEN(x),
+  nums, LAMBDA(txt,
+    LET(
+      seq, SEQUENCE(l),
+      chars, MID(txt, seq, 1),
+      mask, IF(ISNUMBER(--chars), chars, " "),
+      joined, TEXTJOIN("",,mask),
+      split, TEXTSPLIT(TRIM(joined)," "),
+      vals, FILTER(--split, (ISNUMBER(--split)) * (--split>=0) * (--split<=100)),
+      IFERROR(MAX(vals), 0)
+    )
+  ),
+  nums(x)
 )
