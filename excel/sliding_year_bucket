@@ -1,23 +1,23 @@
 let
-    // Reference detection data
+    // Reference Raw_Detections query
     Source = Raw_Detections,
 
-    // Ensure detection timestamp is Date type
-    DetectionDates = Table.TransformColumnTypes(Source, {{"date", type date}}),
+    // Ensure Month-Year is typed as date
+    DetectionDates = Table.TransformColumnTypes(Source, {{"Month-Year", type date}}),
 
-    // Floor to first-of-month for all dates
-    FirstOfMonth = Table.TransformColumns(DetectionDates, {{"date", each Date.StartOfMonth(_), type date}}),
+    // Filter out any null Month-Year rows (just in case)
+    ValidDates = Table.SelectRows(DetectionDates, each [Month-Year] <> null),
 
-    // Determine most recent month with detections
-    LatestMonth = List.Max(FirstOfMonth[date]),
+    // Get latest detection month
+    LatestMonth = List.Max(ValidDates[Month-Year]),
 
-    // Define rolling 12-month window
+    // Go back 11 months
     StartMonth = Date.AddMonths(LatestMonth, -11),
 
-    // Build the 12-month list
+    // Build list of 12 consecutive first-of-month dates
     MonthList = List.Transform({0..11}, each Date.AddMonths(StartMonth, _)),
 
-    // Convert to table
+    // Convert list to table
     MonthTable = Table.FromList(MonthList, Splitter.SplitByNothing(), {"Month-Year"}),
 
     // Set column type
