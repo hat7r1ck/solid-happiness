@@ -1,0 +1,26 @@
+let
+    // Reference detection data
+    Source = Raw_Detections,
+
+    // Ensure detection timestamp is Date type
+    DetectionDates = Table.TransformColumnTypes(Source, {{"date", type date}}),
+
+    // Floor to first-of-month for all dates
+    FirstOfMonth = Table.TransformColumns(DetectionDates, {{"date", each Date.StartOfMonth(_), type date}}),
+
+    // Determine most recent month with detections
+    LatestMonth = List.Max(FirstOfMonth[date]),
+
+    // Define rolling 12-month window
+    StartMonth = Date.AddMonths(LatestMonth, -11),
+
+    // Build the 12-month list
+    MonthList = List.Transform({0..11}, each Date.AddMonths(StartMonth, _)),
+
+    // Convert to table
+    MonthTable = Table.FromList(MonthList, Splitter.SplitByNothing(), {"Month-Year"}),
+
+    // Set column type
+    Final = Table.TransformColumnTypes(MonthTable, {{"Month-Year", type date}})
+in
+    Final
