@@ -1,0 +1,28 @@
+let
+    // Reference Raw_Detections query
+    Source = Raw_Detections,
+
+    // Ensure Month-Year is correctly typed
+    Dates = Table.TransformColumnTypes(Source, {{"Month-Year", type date}}),
+
+    // Filter out nulls
+    ValidDates = Table.SelectRows(Dates, each [#"Month-Year"] <> null),
+
+    // Get min and max months from actual data
+    MinMonth = List.Min(ValidDates[#"Month-Year"]),
+    MaxMonth = List.Max(ValidDates[#"Month-Year"]),
+
+    // Calculate number of months between them
+    MonthCount = Date.Year(MaxMonth) * 12 + Date.Month(MaxMonth) 
+               - Date.Year(MinMonth) * 12 - Date.Month(MinMonth),
+
+    // Generate month list inclusive of start and end
+    MonthList = List.Transform({0..MonthCount}, each Date.AddMonths(MinMonth, _)),
+
+    // Convert to table
+    MonthTable = Table.FromList(MonthList, Splitter.SplitByNothing(), {"Month-Year"}),
+
+    // Ensure final column is Date type
+    Final = Table.TransformColumnTypes(MonthTable, {{"Month-Year", type date}})
+in
+    Final
