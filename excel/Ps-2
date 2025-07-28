@@ -1,0 +1,80 @@
+Clear-Host
+
+# === PROMPT FOR HOSTNAME ===
+$inputHost = Read-Host "Enter hostname (no domain)"
+
+if ([string]::IsNullOrWhiteSpace($inputHost)) {
+    Write-Host "`nERROR: No hostname provided. Exiting." -ForegroundColor Red
+    exit 1
+}
+
+# === CLEAN HOSTNAME ===
+$hostname = $inputHost.Split(".")[0]
+
+Write-Host "`nUsing cleaned hostname: $hostname" -ForegroundColor Cyan
+
+# === FORWARD DNS RESOLUTION ===
+try {
+    $dnsRecord = Resolve-DnsName -Name $hostname -ErrorAction Stop | Where-Object { $_.Type -eq "A" }
+    $ip = $dnsRecord.IPAddress
+    Write-Host "Resolved IP: $ip" -ForegroundColor Green
+} catch {
+    Write-Host "ERROR: Unable to resolve IP for '$hostname'. Exiting." -ForegroundColor Red
+    exit 1
+}
+
+# === REVERSE DNS LOOKUP ===
+try {
+    $reverseRecord = Resolve-DnsName -Name $ip -Type PTR -ErrorAction Stop
+    $reverseName = $reverseRecord.NameHost.TrimEnd(".")
+    Write-Host "Reverse DNS: $ip -> $reverseName" -ForegroundColor Yellow
+
+    # Flag mismatch between requested hostname and PTR record
+    if ($reverseName -notlike "*$hostname*") {
+        Write-Host "WARNING: Hostname and reverse DNS do not match. DNS may be stale." -ForegroundColor DarkYellow
+    }
+} catch {
+    Write-Host "Reverse DNS lookup failed for $ip" -ForegroundColor DarkGray
+    $reverseName = "Unavailable"
+}
+
+# === PING TEST ===
+Write-Host "`nRunning ping to $ip..." -ForegroundColor Cyan
+$pingResult = Test-Connection -ComputerName $ip -Count 2 -Quiet -TimeoutSeconds 1
+
+if ($pingResult) {
+    Write-Host "Ping Result: Host responded to ICMP" -ForegroundColor Green
+} else {
+    Write-Host "Ping Result: No ICMP response" -ForegroundColor Yellow
+}
+
+# === TCP PORT CHECK ===
+$ports = @(135, 445, 3389)
+$reachable = $false
+
+Write-Host "`nChecking TCP ports..." -ForegroundColor Cyan
+
+foreach ($port in $ports) {
+    $check = Test-NetConnection -ComputerName $ip -Port $port -WarningAction SilentlyContinue
+    if ($check.TcpTestSucceeded) {
+        Write-Host "  Port $port: OPEN" -ForegroundColor Green
+        $reachable = $true
+    } else {
+        Write-Host "  Port $port: CLOSED or BLOCKED" -ForegroundColor Red
+    }
+}
+
+# === FINAL VERDICT ===
+Write-Host "`n========== FINAL VERDICT ==========" -ForegroundColor Cyan
+Write-Host "Input Hostname: $hostname"
+Write-Host "Resolved IP:    $ip"
+Write-Host "Reverse DNS:    $reverseName"
+Write-Host "Ping:           " -NoNewline; if ($pingResult) { Write-Host "RESPONDED" -ForegroundColor Green } else { Write-Host "NO REPLY" -ForegroundColor Yellow }
+Write-Host "Ports Checked:  $($ports -join ', ')"
+
+if ($reachable) {
+    Write-Host "RESULT: HOST IS ONLINE (verified by TCP connection)" -ForegroundColor Green
+} else {
+    Write-Host "RESULT: HOST IS OFFLINE OR BLOCKED (no open ports confirmed)" -ForegroundColor Red
+}
+Write-Host "===================================" -ForegroundColor Cyan
