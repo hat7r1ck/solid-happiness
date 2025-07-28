@@ -1,0 +1,24 @@
+# === CONFIGURATION ===
+$host = "10.0.0.1"  # Replace with hostname or IP
+$ports = @(135, 445, 3389)  # Add/remove ports to test
+
+# === EXECUTION ===
+$reachable = $false
+
+Write-Host "Checking host: $host" -ForegroundColor Cyan
+
+foreach ($port in $ports) {
+    $check = Test-NetConnection -ComputerName $host -Port $port -WarningAction SilentlyContinue
+    if ($check.TcpTestSucceeded) {
+        Write-Host "  Port $port: OPEN" -ForegroundColor Green
+        $reachable = $true
+    } else {
+        Write-Host "  Port $port: CLOSED or BLOCKED" -ForegroundColor Red
+    }
+}
+
+if ($reachable) {
+    Write-Host "`nResult: HOST IS ONLINE" -ForegroundColor Green
+} else {
+    Write-Host "`nResult: HOST IS OFFLINE OR BLOCKED" -ForegroundColor Red
+}
