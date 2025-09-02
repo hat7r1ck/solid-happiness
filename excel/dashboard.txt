@@ -1,0 +1,141 @@
+Public Sub QuickRefresh()
+    BuildCaseReview
+    On Error Resume Next
+    RefreshDashboard
+End Sub
+
+  Option Explicit
+
+Public Sub SetupDashboard()
+    Dim wsOut As Worksheet, wsDash As Worksheet, lo As ListObject
+    Set wsOut = SheetByName("Case Review List")
+    Set lo = EnsureReviewTable(wsOut) ' creates or resizes T_Review to A:H current used rows
+
+    On Error Resume Next
+    Application.DisplayAlerts = False
+    ThisWorkbook.Worksheets("Dashboard").Delete
+    Application.DisplayAlerts = True
+    On Error GoTo 0
+
+    Set wsDash = ThisWorkbook.Worksheets.Add(After:=wsOut)
+    wsDash.Name = "Dashboard"
+
+    Dim pc As PivotCache
+    Set pc = ThisWorkbook.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=lo.Range)
+
+    ' Total pivot
+    Dim ptT As PivotTable
+    Set ptT = pc.CreatePivotTable(TableDestination:=wsDash.Range("A3"), TableName:="PT_Total")
+    With ptT
+        .RowAxisLayout xlTabularRow
+        On Error Resume Next
+        .PivotFields("XSOAR_ID").Orientation = xlHidden
+        On Error GoTo 0
+        .AddDataField .PivotFields("XSOAR_ID"), "CaseCount", xlCount
+    End With
+
+    ' No-determination pivot
+    Dim ptN As PivotTable
+    Set ptN = pc.CreatePivotTable(TableDestination:=wsDash.Range("E3"), TableName:="PT_NoDet")
+    With ptN
+        .RowAxisLayout xlTabularRow
+        .AddDataField .PivotFields("XSOAR_ID"), "CaseCount", xlCount
+        With .PivotFields("Determination")
+            .Orientation = xlPageField
+            .EnableMultiplePageItems = False
+            On Error Resume Next
+            .CurrentPage = "(blank)"
+            On Error GoTo 0
+        End With
+    End With
+
+    ' KPI cells
+    wsDash.Range("A1").Value = "KPI"
+    wsDash.Range("A2:B2").Value = Array("No Determination", "")
+    wsDash.Range("A3:B3").Value = Array("Determination Set", "")
+    wsDash.Range("A4:B4").Value = Array("Total Cases", "")
+    wsDash.Range("A5:B5").Value = Array("% Complete", "")
+
+    ' Link KPIs to pivots with GETPIVOTDATA
+    wsDash.Range("B4").Formula = "=GETPIVOTDATA(""CaseCount"",A3)"
+    wsDash.Range("B2").Formula = "=GETPIVOTDATA(""CaseCount"",E3)"
+    wsDash.Range("B3").Formula = "=MAX(B4-B2,0)"
+    wsDash.Range("B5").Formula = "=IF(B4=0,0,B3/B4)"
+    wsDash.Range("B5").NumberFormat = "0%"
+
+    ' Doughnut chart with two slices driven by cells B2 and B3
+    Dim ch As ChartObject
+    Set ch = wsDash.ChartObjects.Add(Left:=A2Left(wsDash) + 260, Top:=10, Width:=360, Height:=220)
+    With ch.Chart
+        .ChartType = xlDoughnut
+        .SetSourceData Source:=wsDash.Range("A2:B3")
+        .HasTitle = True
+        .ChartTitle.Text = "Determination Progress"
+        .Legend.Position = xlLegendPositionRight
+    End With
+
+    ' Make it look decent
+    wsDash.Columns("A:B").AutoFit
+
+    MsgBox "Dashboard created. Use RefreshDashboard after each BuildCaseReview.", vbInformation
+End Sub
+
+Public Sub RefreshDashboard()
+    Dim wsOut As Worksheet, wsDash As Worksheet, lo As ListObject
+    On Error Resume Next
+    Set wsOut = ThisWorkbook.Worksheets("Case Review List")
+    Set wsDash = ThisWorkbook.Worksheets("Dashboard")
+    On Error GoTo 0
+    If wsOut Is Nothing Or wsDash Is Nothing Then
+        MsgBox "Missing Case Review List or Dashboard. Run SetupDashboard first.", vbExclamation
+        Exit Sub
+    End If
+
+    Set lo = EnsureReviewTable(wsOut) ' resize table to current A:H
+    ' Repoint pivot caches to table range in case the table moved
+    Dim pt As PivotTable
+    For Each pt In wsDash.PivotTables
+        pt.ChangePivotCache ThisWorkbook.PivotCaches.Create(xlDatabase, lo.Range)
+        pt.RefreshTable
+    Next pt
+
+    ' Force KPI cells to recalc
+    wsDash.Calculate
+End Sub
+
+Private Function EnsureReviewTable(wsOut As Worksheet) As ListObject
+    Dim lastRow As Long, lo As ListObject, rng As Range
+    lastRow = wsOut.Cells(wsOut.Rows.Count, "A").End(xlUp).Row
+    If lastRow < 2 Then lastRow = 2
+    Set rng = wsOut.Range("A1:H" & lastRow)
+
+    On Error Resume Next
+    Set lo = wsOut.ListObjects("T_Review")
+    On Error GoTo 0
+
+    If lo Is Nothing Then
+        Set lo = wsOut.ListObjects.Add(xlSrcRange, rng, , xlYes)
+        lo.Name = "T_Review"
+    Else
+        lo.Resize rng
+    End If
+
+    ' Keep headers bold if desired
+    If wsOut.Range("A1").Font.Bold = False Then wsOut.Rows(1).Font.Bold = True
+
+    Set EnsureReviewTable = lo
+End Function
+
+Private Function SheetByName(ByVal nm As String) As Worksheet
+    On Error Resume Next
+    Set SheetByName = ThisWorkbook.Worksheets(nm)
+    On Error GoTo 0
+    If SheetByName Is Nothing Then
+        Set SheetByName = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        SheetByName.Name = nm
+    End If
+End Function
+
+Private Function A2Left(ws As Worksheet) As Double
+    A2Left = ws.Range("A2").Left
+End Function
