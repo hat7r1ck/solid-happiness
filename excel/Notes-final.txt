@@ -1,0 +1,68 @@
+Paste the text below into a big cell in Excel. It is everything a manager or engineer needs.
+
+CASE REVIEW LIST - STUPID SIMPLE GUIDE
+
+What you do
+1) Open the workbook and save as .xlsm.
+2) Put engineer names in Sheet2 column A starting at A2. One per row.
+3) Load new data into Sheet1 using one of the two options below.
+4) Press Alt+F8, pick BuildCaseReview, click Run. Or click the Refresh button if you added one.
+
+Option A - append mode (preferred)
+- In Sheet1, turn the data into a table one time: click any cell, press Ctrl+T, check “My table has headers”, OK. 
+- With the table selected, Table Design, set Table Name to T_Raw.
+- Next time you get a new export, paste it into the first empty row of T_Raw. The table will expand.
+- Run BuildCaseReview.
+
+Option B - overwrite mode
+- In Sheet1, keep the header row in row 1.
+- Paste the latest export directly under the header. Do not paste a second header row.
+- Run BuildCaseReview.
+
+What you get after Run
+- De-duplicated by id. If the same id appears more than once, the row with the newest Closed Date wins.
+- Rows where Manager equals Dbot are excluded.
+- PriorityFlag: 1 means review first. 0 means normal.
+- Closed Date shows real timestamps. Blank when missing or the source says “Still Open”.
+- Columns D, E, F are interactive:
+  - D: Senior Reviewer drop down, list comes from Sheet2 column A.
+  - E: Determination drop down, choices are Additional Actions Required, Validated, Coaching, Exemplary.
+  - F: Notes, free text.
+
+Columns in Case Review List
+A XSOAR_ID
+B Case Owner
+C Manager of Case Owner
+D Senior Reviewer (drop down)
+E Determination (drop down)
+F Notes
+G PriorityFlag
+H Closed Date/Time (UTC)
+
+Priority rules
+- linkedCount equals 0, or
+- name starts with INV, or
+- type equals Manual, or
+- type equals Parent.
+
+What persists across runs
+- Reviewer fields and notes in columns D, E, F are saved by Case ID in a hidden sheet named InputsStore. Your selections come back even if the row disappears and returns later.
+- Core fields per Case ID are saved in a hidden sheet named PersistStore. IDs do not drop from the output when you overwrite Sheet1 with a smaller export. They return on every run unless Manager is Dbot which remains excluded in the visible list.
+
+Formatting behavior
+- Your column widths and conditional formatting in Case Review List are preserved. The macro does not wipe formats.
+- Dates in column H are formatted as m/d/yy h:mm AM/PM. Blank if the date is missing or “Still Open”.
+
+One time optional
+- Add a button: Developer tab, Insert, Form Controls, Button. Assign macro BuildCaseReview. Label it Refresh.
+
+Troubleshooting - quick
+- Nothing happens or a warning shows about headers:
+  Make sure Sheet1 or T_Raw has these headers exactly: id, owner, Manager, linkedCount, name, type, Closed Date/Time (UTC).
+- Reviewer drop down empty:
+  Fill Sheet2 column A with names starting at A2.
+- Dates sort oddly or show as text:
+  That column is already formatted. If your raw export uses unusual text dates, just run again. The parser handles US dates like 8/1/25 1:50 AM and ISO forms. Missing dates show as blank by design.
+
+Daily use reminder
+- Append to the T_Raw table or paste under the Sheet1 header, then run BuildCaseReview. Do not paste a second header. Use the two drop downs and Notes. Your inputs will be there next time.
