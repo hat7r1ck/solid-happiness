@@ -1,0 +1,573 @@
+Option Explicit
+
+' ===============================
+' Case Review List Builder (KISS)
+' ===============================
+' Input supported:
+' - Sheet1 plain range with headers in row 1, data under it
+' - Sheet1 Excel Table named "T_Raw", paste or append into the table
+'
+' Output:
+' - De-duped by id, newest close time wins
+' - Manager "Dbot" rows are excluded
+' - PriorityFlag: 1 = review first, 0 = normal
+' - Closed Date/Time (UTC): real timestamps, blank when missing or "Still Open"
+' - Senior Reviewer (col D) dropdown from Sheet2!A2:A...
+' - Determination (col E) dropdown: Additional Actions Required, Validated, Coaching, Exemplary
+' - Notes (col F) is free text
+' - Inputs in D-F persist between runs
+'
+' Admin toggles:
+Private Const CLOSED_HDR As String = "Closed Date/Time (UTC)" ' exact header in Sheet1 or T_Raw
+Private Const PRESERVE_WIDTHS As Boolean = True               ' True keeps your manual column widths
+Private Const BOLD_HEADER As Boolean = True                   ' Bold the header row if True
+
+Public Sub BuildCaseReview()
+    Dim wsIn As Worksheet, wsOut As Worksheet, wsEng As Worksheet
+    Dim inData As Variant
+    Dim colId As Long, colOwner As Long, colMgr As Long, colLinked As Long, colName As Long, colType As Long, colClosed As Long
+    Dim r As Long, idVal As String
+    Dim dictCurrent As Object ' id -> Array(owner, mgr, prio, closedSerial)
+    Dim dictPersist As Object ' union store: id -> Array(owner, mgr, prio, closedSerial)
+    Dim dictKeep As Object    ' XSOAR_ID -> Array(SeniorReviewer, Determination, Notes)
+    Dim hasClosed As Boolean
+
+    ' Safe app state
+    Dim prevCalc As XlCalculation
+    prevCalc = Application.Calculation
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    On Error GoTo CleanFail
+
+    ' Ensure required sheets exist
+    Set wsIn = SheetByName("Sheet1")
+    Set wsOut = SheetByName("Case Review List")
+    Set wsEng = SheetByName("Sheet2")
+
+    ' Snapshot user inputs from Case Review List (D-F) keyed by XSOAR_ID
+    Set dictKeep = CreateObject("Scripting.Dictionary")
+    SnapshotUserInputs wsOut, dictKeep
+
+    ' Build an input matrix from either T_Raw or plain range
+    Set dictCurrent = Nothing
+    inData = GetInputMatrix(wsIn) ' returns Empty if no usable data
+
+    If Not IsEmpty(inData) Then
+        ' Locate headers in the matrix, case insensitive
+        colId = FindHeader(inData, "id")
+        colOwner = FindHeader(inData, "owner")
+        colMgr = FindHeader(inData, "Manager")
+        colLinked = FindHeader(inData, "linkedCount")
+        colName = FindHeader(inData, "name")
+        colType = FindHeader(inData, "type")
+        colClosed = FindHeader(inData, CLOSED_HDR)
+        hasClosed = (colClosed > 0)
+
+        If colId = 0 Or colOwner = 0 Or colMgr = 0 Or colLinked = 0 Or colName = 0 Or colType = 0 Then
+            MsgBox "Missing columns in Sheet1 or T_Raw: id, owner, Manager, linkedCount, name, type.", vbExclamation
+            GoTo AfterPersistMerge
+        End If
+
+        ' Build current dictionary from matrix with de-dupe by id, prefer newest Closed
+        Set dictCurrent = CreateObject("Scripting.Dictionary")
+        For r = 2 To UBound(inData, 1)
+            idVal = Trim$(CStr(inData(r, colId)))
+            If Len(idVal) = 0 Then GoTo NextR
+
+            Dim ownerVal As String, mgrVal As String, nm As String, ty As String
+            Dim linkedVal As Long, prio As Long, dVal As Double
+
+            ownerVal = CStr(inData(r, colOwner))
+            mgrVal = CStr(inData(r, colMgr))
+            ' exclude rows where Manager is Dbot
+            If UCase$(Trim$(mgrVal)) = "DBOT" Then GoTo NextR
+
+            nm = CStr(inData(r, colName))
+            ty = CStr(inData(r, colType))
+            linkedVal = Val(inData(r, colLinked))
+            prio = ComputePriority(linkedVal, nm, ty)
+            dVal = IIf(hasClosed, ToExcelDate(inData(r, colClosed)), 0)
+
+            If Not dictCurrent.Exists(idVal) Then
+                dictCurrent(idVal) = Array(ownerVal, mgrVal, prio, dVal)
+            Else
+                Dim cur() As Variant
+                cur = dictCurrent(idVal)
+                If dVal > CDbl(cur(3)) Then
+                    dictCurrent(idVal) = Array(ownerVal, mgrVal, prio, dVal)
+                End If
+            End If
+NextR:
+        Next r
+    End If
+
+AfterPersistMerge:
+    ' Load union persistence store
+    Set dictPersist = LoadPersistStore()
+
+    ' Merge current into persistence, prefer newer Closed or keep existing if newer
+    Dim k As Variant, rec() As Variant
+    If Not dictCurrent Is Nothing Then
+        For Each k In dictCurrent.Keys
+            rec = dictCurrent(k)
+            If Not dictPersist.Exists(k) Then
+                dictPersist(k) = rec
+            Else
+                Dim oldRec() As Variant
+                oldRec = dictPersist(k)
+                If CDbl(rec(3)) >= CDbl(oldRec(3)) Then
+                    dictPersist(k) = rec
+                End If
+            End If
+        Next k
+    End If
+
+    ' Save persistence back to sheet
+    SavePersistStore dictPersist
+
+    ' Write Case Review List from persistence, excluding Dbot manager
+    WriteOutputFromPersist wsOut, dictPersist
+
+    ' Reapply DV and restore user inputs
+    EnsureEngineersListName wsEng
+    Dim lastOutRow As Long
+    lastOutRow = wsOut.Cells(wsOut.Rows.Count, "A").End(xlUp).Row
+    If lastOutRow < 2 Then lastOutRow = 2
+
+    With wsOut.Range("D2:D" & lastOutRow).Validation
+        .Delete
+    End With
+    wsOut.Range("D2:D" & lastOutRow).Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Operator:=xlBetween, Formula1:="=EngineersList"
+
+    With wsOut.Range("E2:E" & lastOutRow).Validation
+        .Delete
+    End With
+    wsOut.Range("E2:E" & lastOutRow).Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Operator:=xlBetween, _
+        Formula1:="Additional Actions Required,Validated,Coaching,Exemplary"
+
+    RestoreUserInputs wsOut, dictKeep, lastOutRow
+
+    ' Basic formatting
+    If BOLD_HEADER Then wsOut.Rows(1).Font.Bold = True
+    If Not PRESERVE_WIDTHS Then wsOut.Columns("A:H").AutoFit
+    wsOut.Columns("H").NumberFormat = "m/d/yy h:mm AM/PM;;;"
+
+CleanExit:
+    Application.Calculation = prevCalc
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    Exit Sub
+
+CleanFail:
+    Application.Calculation = prevCalc
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    MsgBox "BuildCaseReview stopped: " & Err.Description, vbExclamation
+End Sub
+
+' ---------- Input handling ----------
+
+Private Function GetInputMatrix(wsIn As Worksheet) As Variant
+    ' Tries to read from a table named T_Raw first.
+    ' If not found, falls back to row-1 headers with data under them.
+    Dim lo As ListObject
+    On Error Resume Next
+    Set lo = wsIn.ListObjects("T_Raw")
+    On Error GoTo 0
+
+    If Not lo Is Nothing Then
+        ' Table mode
+        If lo.HeaderRowRange Is Nothing Then Exit Function
+        If lo.DataBodyRange Is Nothing Then
+            ' Return just headers so header check can run, but no data rows
+            Dim hdrArr As Variant
+            hdrArr = lo.HeaderRowRange.Value2 ' 1 x n
+            Dim cols As Long: cols = lo.ListColumns.Count
+            Dim tmp() As Variant
+            ReDim tmp(1 To 1, 1 To cols)
+            Dim c As Long
+            For c = 1 To cols
+                tmp(1, c) = hdrArr(1, c)
+            Next c
+            GetInputMatrix = tmp
+            Exit Function
+        End If
+
+        Dim bodyArr As Variant, rows As Long, cols As Long, r As Long, c As Long
+        Dim hdr As Variant
+        hdr = lo.HeaderRowRange.Value2
+        bodyArr = lo.DataBodyRange.Value2
+        rows = UBound(bodyArr, 1)
+        cols = UBound(bodyArr, 2)
+        Dim outArr() As Variant
+        ReDim outArr(1 To rows + 1, 1 To cols)
+        ' header row
+        For c = 1 To cols
+            outArr(1, c) = hdr(1, c)
+        Next c
+        ' body rows
+        For r = 1 To rows
+            For c = 1 To cols
+                outArr(r + 1, c) = bodyArr(r, c)
+            Next c
+        Next r
+        GetInputMatrix = outArr
+        Exit Function
+    End If
+
+    ' Plain range mode, headers in row 1
+    Dim lastRow As Long, lastCol As Long
+    lastRow = wsIn.Cells(wsIn.Rows.Count, 1).End(xlUp).Row
+    If lastRow < 2 Then Exit Function
+
+    lastCol = wsIn.Cells(1, wsIn.Columns.Count).End(xlToLeft).Column
+    GetInputMatrix = wsIn.Range(wsIn.Cells(1, 1), wsIn.Cells(lastRow, lastCol)).Value2
+End Function
+
+' ---------- Header, priority, dates ----------
+
+Private Function FindHeader(ByVal data As Variant, ByVal name As String) As Long
+    Dim c As Long, target As String
+    target = LCase$(name)
+    For c = 1 To UBound(data, 2)
+        If LCase$(Trim$(CStr(data(1, c)))) = target Then
+            FindHeader = c
+            Exit Function
+        End If
+    Next c
+    FindHeader = 0
+End Function
+
+Private Function ComputePriority(ByVal linkedCount As Long, ByVal caseName As String, ByVal caseType As String) As Long
+    Dim n As String, t As String
+    n = UCase$(Trim$(caseName))
+    t = Trim$(caseType)
+    If linkedCount = 0 Then
+        ComputePriority = 1
+    ElseIf Left$(n, 3) = "INV" Then
+        ComputePriority = 1
+    ElseIf t = "Manual" Or t = "Parent" Then
+        ComputePriority = 1
+    Else
+        ComputePriority = 0
+    End If
+End Function
+
+Private Function ToExcelDate(ByVal v As Variant) As Double
+    ' Robust parser for:
+    ' - Excel serial (e.g., 45567.5)
+    ' - US "M/D/YY h:mm AM/PM" or "MM/DD/YYYY h:mm AM/PM"
+    ' - ISO "YYYY-MM-DDThh:mm[:ss][.fff][Z]"
+    ' - Returns 0 for missing or "Still Open"
+    On Error GoTo FailSoft
+
+    If IsEmpty(v) Or IsNull(v) Then GoTo FailSoft
+
+    Dim raw As String
+    raw = Trim$(UCase$(CStr(v)))
+    If raw = "STILL OPEN" Or raw = "OPEN" Then GoTo FailSoft
+
+    If IsNumeric(v) Then
+        Dim d As Double: d = CDbl(v)
+        If d > 20000 And d < 100000 Then
+            ToExcelDate = d
+            Exit Function
+        End If
+    End If
+
+    Dim s As String: s = Trim$(CStr(v))
+    If Len(s) = 0 Then GoTo FailSoft
+
+    s = Replace(s, "T", " ")
+    s = Replace(s, "Z", "")
+
+    Dim sp As Long: sp = InStrRev(s, " ")
+    If sp > 0 Then
+        Dim tail As String: tail = Mid$(s, sp + 1)
+        If Left$(tail, 1) = "+" Or Left$(tail, 1) = "-" Then
+            s = Left$(s, sp - 1)
+        End If
+    End If
+
+    If IsDate(s) Then
+        ToExcelDate = CDbl(CDate(s))
+        Exit Function
+    End If
+
+    Dim datePart As String, timePart As String, hasTime As Boolean
+    Dim p As Long: p = InStr(s, " ")
+    If p > 0 Then
+        datePart = Left$(s, p - 1)
+        timePart = Mid$(s, p + 1)
+        hasTime = True
+    Else
+        datePart = s
+        hasTime = False
+    End If
+
+    Dim parts() As String: parts = Split(datePart, "/")
+    If UBound(parts) = 2 Then
+        Dim m As Integer, dday As Integer, y As Integer
+        m = Val(parts(0))
+        dday = Val(parts(1))
+        y = Val(parts(2))
+        If y < 100 Then
+            If y < 80 Then y = 2000 + y Else y = 1900 + y
+        End If
+
+        If m >= 1 And m <= 12 And dday >= 1 And dday <= 31 Then
+            If hasTime Then
+                ToExcelDate = CDbl(DateSerial(y, m, dday) + TimeValue(ParseTimeFlexible(timePart)))
+            Else
+                ToExcelDate = CDbl(DateSerial(y, m, dday))
+            End If
+            Exit Function
+        End If
+
+        If dday >= 1 And dday <= 12 And m >= 1 And m <= 31 Then
+            If hasTime Then
+                ToExcelDate = CDbl(DateSerial(y, dday, m) + TimeValue(ParseTimeFlexible(timePart)))
+            Else
+                ToExcelDate = CDbl(DateSerial(y, dday, m))
+            End If
+            Exit Function
+        End If
+    End If
+
+FailSoft:
+    ToExcelDate = 0
+End Function
+
+Private Function ParseTimeFlexible(ByVal s As String) As Date
+    On Error GoTo Fallback
+    s = Trim$(s)
+    If s = "" Then ParseTimeFlexible = 0: Exit Function
+
+    If InStr(s, ":") > 0 Then
+        Dim firstCol As Long: firstCol = InStr(s, ":")
+        Dim secondCol As Long: secondCol = InStr(firstCol + 1, s, ":")
+        If secondCol = 0 Then
+            ParseTimeFlexible = CDate(Left$(s, firstCol - 1) & ":" & Mid$(s, firstCol + 1) & ":00")
+            Exit Function
+        End If
+    End If
+
+    If IsDate(s) Then
+        ParseTimeFlexible = CDate(s)
+        Exit Function
+    End If
+
+Fallback:
+    ParseTimeFlexible = 0
+End Function
+
+' ---------- Persistence and output ----------
+
+Private Sub SnapshotUserInputs(ByVal wsOut As Worksheet, ByRef dictKeep As Object)
+    Dim lastRow As Long, r As Long, idVal As String
+    lastRow = wsOut.Cells(wsOut.Rows.Count, "A").End(xlUp).Row
+    If lastRow < 2 Then Exit Sub
+
+    For r = 2 To lastRow
+        idVal = Trim$(CStr(wsOut.Cells(r, "A").Value))
+        If Len(idVal) > 0 Then
+            dictKeep(idVal) = Array( _
+                CStr(wsOut.Cells(r, "D").Value), _
+                CStr(wsOut.Cells(r, "E").Value), _
+                CStr(wsOut.Cells(r, "F").Value) _
+            )
+        End If
+    Next r
+End Sub
+
+Private Sub RestoreUserInputs(ByVal wsOut As Worksheet, ByVal dictKeep As Object, ByVal lastOutRow As Long)
+    Dim r As Long, idVal As String
+    For r = 2 To lastOutRow
+        idVal = Trim$(CStr(wsOut.Cells(r, "A").Value))
+        If Len(idVal) > 0 Then
+            If dictKeep.Exists(idVal) Then
+                Dim rec() As Variant
+                rec = dictKeep(idVal)
+                wsOut.Cells(r, "D").Value = rec(0)
+                wsOut.Cells(r, "E").Value = rec(1)
+                wsOut.Cells(r, "F").Value = rec(2)
+            End If
+        End If
+    Next r
+End Sub
+
+Private Sub EnsureEngineersListName(ByVal wsEng As Worksheet)
+    Dim nm As Name
+    On Error Resume Next
+    Set nm = ThisWorkbook.Names("EngineersList")
+    On Error GoTo 0
+
+    If nm Is Nothing Then
+        ThisWorkbook.Names.Add Name:="EngineersList", RefersTo:=EngineersRefersTo(wsEng)
+    Else
+        nm.RefersTo = EngineersRefersTo(wsEng)
+    End If
+End Sub
+
+Private Function EngineersRefersTo(ByVal wsEng As Worksheet) As String
+    Dim last As Long
+    last = wsEng.Cells(wsEng.Rows.Count, "A").End(xlUp).Row
+    If last < 2 Then last = 2
+    EngineersRefersTo = "='" & wsEng.Name & "'!$A$2:$A$" & last
+End Function
+
+Private Function LoadPersistStore() As Object
+    Dim ws As Worksheet, lo As ListObject
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+
+    Set ws = SheetByName("PersistStore")
+    On Error Resume Next
+    Set lo = ws.ListObjects("T_Persist")
+    On Error GoTo 0
+
+    If lo Is Nothing Then
+        ws.Cells.Clear
+        ws.Range("A1:E1").Value = Array("XSOAR_ID", "Case Owner", "Manager of Case Owner", "PriorityFlag", "ClosedSerial")
+        Set lo = ws.ListObjects.Add(xlSrcRange, ws.Range("A1:E1"), , xlYes)
+        lo.Name = "T_Persist"
+        ws.Visible = xlSheetVeryHidden
+        Set LoadPersistStore = dict
+        Exit Function
+    End If
+
+    If lo.DataBodyRange Is Nothing Then
+        ws.Visible = xlSheetVeryHidden
+        Set LoadPersistStore = dict
+        Exit Function
+    End If
+
+    Dim arr As Variant, r As Long
+    arr = lo.DataBodyRange.Value2
+    For r = 1 To UBound(arr, 1)
+        If Len(Trim$(CStr(arr(r, 1)))) > 0 Then
+            dict(Trim$(CStr(arr(r, 1)))) = Array( _
+                CStr(arr(r, 2)), _
+                CStr(arr(r, 3)), _
+                CLng(arr(r, 4)), _
+                CDbl(arr(r, 5)) _
+            )
+        End If
+    Next r
+
+    ws.Visible = xlSheetVeryHidden
+    Set LoadPersistStore = dict
+End Function
+
+Private Sub SavePersistStore(ByVal dictPersist As Object)
+    Dim ws As Worksheet, lo As ListObject
+    Set ws = SheetByName("PersistStore")
+
+    On Error Resume Next
+    Set lo = ws.ListObjects("T_Persist")
+    On Error GoTo 0
+
+    If lo Is Nothing Then
+        ws.Cells.Clear
+        ws.Range("A1:E1").Value = Array("XSOAR_ID", "Case Owner", "Manager of Case Owner", "PriorityFlag", "ClosedSerial")
+        Set lo = ws.ListObjects.Add(xlSrcRange, ws.Range("A1:E1"), , xlYes)
+        lo.Name = "T_Persist"
+    End If
+
+    If Not lo.DataBodyRange Is Nothing Then lo.DataBodyRange.Delete
+
+    Dim n As Long, k As Variant, outArr() As Variant, i As Long
+    n = dictPersist.Count
+    If n > 0 Then
+        ReDim outArr(1 To n, 1 To 5)
+        i = 1
+        For Each k In dictPersist.Keys
+            Dim rec() As Variant
+            rec = dictPersist(k)
+            outArr(i, 1) = CStr(k)
+            outArr(i, 2) = rec(0)
+            outArr(i, 3) = rec(1)
+            outArr(i, 4) = CLng(rec(2))
+            outArr(i, 5) = CDbl(rec(3))
+            i = i + 1
+        Next k
+        lo.Resize ws.Range("A1").Resize(n + 1, 5)
+        lo.DataBodyRange.Value = outArr
+    Else
+        lo.Resize ws.Range("A1:E1")
+    End If
+
+    ws.Visible = xlSheetVeryHidden
+End Sub
+
+Private Sub WriteOutputFromPersist(ByVal wsOut As Worksheet, ByVal dictPersist As Object)
+    ' Headers, include visible Closed Date
+    wsOut.Rows(1).ClearContents
+    wsOut.Range("A1").Resize(1, 8).Value = Array( _
+        "XSOAR_ID", "Case Owner", "Manager of Case Owner", _
+        "Senior Reviewer", "Determination", "Notes", "PriorityFlag", "Closed Date/Time (UTC)" _
+    )
+
+    ' Clear body values only
+    If wsOut.UsedRange.Rows.Count > 1 Then wsOut.Rows("2:" & wsOut.Rows.Count).ClearContents
+
+    ' Collect keys excluding Dbot manager
+    Dim keys As Collection, k As Variant, rec() As Variant
+    Set keys = New Collection
+    For Each k In dictPersist.Keys
+        rec = dictPersist(k)
+        If UCase$(Trim$(CStr(rec(1)))) <> "DBOT" Then
+            keys.Add k
+        End If
+    Next k
+
+    Dim n As Long: n = keys.Count
+    If n = 0 Then Exit Sub
+
+    Dim outArr() As Variant, tmpClosed() As Double
+    ReDim outArr(1 To n, 1 To 8)
+    ReDim tmpClosed(1 To n, 1 To 1)
+
+    Dim i As Long
+    i = 1
+    For Each k In keys
+        rec = dictPersist(k)
+        outArr(i, 1) = CStr(k)         ' XSOAR_ID
+        outArr(i, 2) = rec(0)          ' Case Owner
+        outArr(i, 3) = rec(1)          ' Manager of Case Owner
+        ' D-F are user fields, restored later
+        outArr(i, 7) = rec(2)          ' PriorityFlag
+
+        ' Visible Closed date: blank for missing or "Still Open" (serial 0)
+        If CDbl(rec(3)) = 0 Then
+            outArr(i, 8) = ""          ' display blank
+        Else
+            outArr(i, 8) = CDbl(rec(3))
+        End If
+
+        ' Helper for sorting remains numeric
+        tmpClosed(i, 1) = CDbl(rec(3))
+        i = i + 1
+    Next k
+
+    wsOut.Range("A2").Resize(n, 8).Value = outArr
+
+    ' Temp sort helper in column I
+    wsOut.Range("I1").Value = "ClosedSerial_tmp"
+    wsOut.Range("I2").Resize(n, 1).Value = tmpClosed
+
+    ' Sort priority desc, then Closed desc
+    With wsOut.Sort
+        .SortFields.Clear
+        .SortFields.Add Key:=wsOut.Range("G2:G" & n + 1), SortOn:=xlSortOnValues, Order:=xlDescending, DataOption:=xlSortNormal
+        .SortFields.Add Key:=wsOut.Range("I2:I" & n + 1), SortOn:=xlSortOnValues, Order:=xlDescending, DataOption:=xlSortNormal
+        .SetRange wsOut.Range("A1:I" & n + 1)
+        .Header = xlYes
+        .Apply
+    End With
+
+    ' Hide helper
+    wsOut.Columns("I").EntireColumn.Hidden = True
+End Sub
