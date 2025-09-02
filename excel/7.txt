@@ -1,0 +1,483 @@
+Option Explicit
+
+Private Const CLOSED_HDR As String = "Closed Date/Time (UTC)"
+Private Const PRESERVE_WIDTHS As Boolean = True
+Private Const BOLD_HEADER As Boolean = True
+Private Const NORMALIZE_ID_CASE As Boolean = True
+
+Public Sub BuildCaseReview()
+    Dim wsIn As Worksheet, wsOut As Worksheet, wsEng As Worksheet
+    Dim inData As Variant
+    Dim colId As Long, colOwner As Long, colMgr As Long, colLinked As Long, colName As Long, colType As Long, colClosed As Long
+    Dim r As Long, idRaw As String, idKey As String
+    Dim dCur As Object, dPer As Object, dInp As Object
+    Dim hasClosed As Boolean
+    Dim prevCalc As Long
+    prevCalc = Application.Calculation
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = -4135
+    On Error GoTo Fail
+
+    Set wsIn = SheetByName("Sheet1")
+    Set wsOut = SheetByName("Case Review List")
+    Set wsEng = SheetByName("Sheet2")
+
+    Set dPer = LoadPersistStore()
+    Set dInp = LoadInputsStore()
+    SnapshotAndMergeUserInputs wsOut, dInp
+
+    inData = GetInputMatrix(wsIn)
+    If Not IsEmpty(inData) Then
+        colId = FindHeader(inData, "id")
+        colOwner = FindHeader(inData, "owner")
+        colMgr = FindHeader(inData, "Manager")
+        colLinked = FindHeader(inData, "linkedCount")
+        colName = FindHeader(inData, "name")
+        colType = FindHeader(inData, "type")
+        colClosed = FindHeader(inData, CLOSED_HDR)
+        hasClosed = (colClosed > 0)
+        If colId = 0 Or colOwner = 0 Or colMgr = 0 Or colLinked = 0 Or colName = 0 Or colType = 0 Then GoTo PersistOnly
+
+        Set dCur = CreateObject("Scripting.Dictionary")
+        For r = 2 To UBound(inData, 1)
+            idRaw = CStr(inData(r, colId))
+            idKey = IdKeyOf(idRaw)
+            If Len(idKey) = 0 Then GoTo NextR1
+            Dim ownerVal As String, mgrVal As String, nm As String, ty As String
+            Dim linkedVal As Long, prio As Long, dVal As Double
+            ownerVal = CStr(inData(r, colOwner))
+            mgrVal = CStr(inData(r, colMgr))
+            If UCase$(Trim$(mgrVal)) = "DBOT" Then GoTo NextR1
+            nm = CStr(inData(r, colName))
+            ty = CStr(inData(r, colType))
+            linkedVal = Val(inData(r, colLinked))
+            prio = ComputePriority(linkedVal, nm, ty)
+            dVal = IIf(hasClosed, ToExcelDate(inData(r, colClosed)), 0)
+            If Not dCur.Exists(idKey) Then
+                dCur(idKey) = Array(Trim$(CStr(idRaw)), ownerVal, mgrVal, prio, dVal)
+            Else
+                Dim cur() As Variant
+                cur = dCur(idKey)
+                If dVal > CDbl(cur(4)) Then dCur(idKey) = Array(Trim$(CStr(idRaw)), ownerVal, mgrVal, prio, dVal)
+            End If
+NextR1:
+        Next r
+    End If
+
+PersistOnly:
+    If Not dCur Is Nothing Then
+        Dim k As Variant, rec() As Variant, oldRec() As Variant
+        For Each k In dCur.Keys
+            rec = dCur(k)
+            If Not dPer.Exists(k) Then
+                dPer(k) = rec
+            Else
+                oldRec = dPer(k)
+                If CDbl(rec(4)) >= CDbl(oldRec(4)) Then dPer(k) = rec
+            End If
+        Next k
+    End If
+
+    SavePersistStore dPer
+    SaveInputsStore dInp
+    WriteOutputFromPersist wsOut, dPer, dInp
+    EnsureEngineersListName wsEng
+
+    Dim lastOutRow As Long
+    lastOutRow = wsOut.Cells(wsOut.Rows.Count, "A").End(xlUp).Row
+    If lastOutRow < 2 Then lastOutRow = 2
+    With wsOut.Range("D2:D" & lastOutRow).Validation
+        .Delete
+    End With
+    wsOut.Range("D2:D" & lastOutRow).Validation.Add Type:=3, AlertStyle:=1, Operator:=1, Formula1:="=EngineersList"
+    With wsOut.Range("E2:E" & lastOutRow).Validation
+        .Delete
+    End With
+    wsOut.Range("E2:E" & lastOutRow).Validation.Add Type:=3, AlertStyle:=1, Operator:=1, Formula1:="Additional Actions Required,Validated,Coaching,Exemplary"
+
+    If BOLD_HEADER Then wsOut.Rows(1).Font.Bold = True
+    If Not PRESERVE_WIDTHS Then wsOut.Columns("A:H").AutoFit
+    wsOut.Columns("H").NumberFormat = "m/d/yy h:mm AM/PM;;;"
+
+Clean:
+    Application.Calculation = prevCalc
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    Exit Sub
+Fail:
+    Application.Calculation = prevCalc
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    MsgBox "BuildCaseReview stopped: " & Err.Description, vbExclamation
+End Sub
+
+Private Function SheetByName(ByVal nm As String) As Worksheet
+    On Error Resume Next
+    Set SheetByName = ThisWorkbook.Worksheets(nm)
+    On Error GoTo 0
+    If SheetByName Is Nothing Then
+        Set SheetByName = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        SheetByName.Name = nm
+    End If
+End Function
+
+Private Function GetInputMatrix(wsIn As Worksheet) As Variant
+    Dim lo As ListObject
+    On Error Resume Next
+    Set lo = wsIn.ListObjects("T_Raw")
+    On Error GoTo 0
+    If Not lo Is Nothing Then
+        If lo.HeaderRowRange Is Nothing Then Exit Function
+        If lo.DataBodyRange Is Nothing Then
+            Dim hdrArr As Variant, cols As Long, tmp() As Variant, c As Long
+            hdrArr = lo.HeaderRowRange.Value2
+            cols = lo.ListColumns.Count
+            ReDim tmp(1 To 1, 1 To cols)
+            For c = 1 To cols
+                tmp(1, c) = hdrArr(1, c)
+            Next c
+            GetInputMatrix = tmp
+            Exit Function
+        End If
+        Dim bodyArr As Variant, rows As Long, cols2 As Long, r As Long, c2 As Long, outArr() As Variant
+        bodyArr = lo.DataBodyRange.Value2
+        rows = UBound(bodyArr, 1)
+        cols2 = UBound(bodyArr, 2)
+        ReDim outArr(1 To rows + 1, 1 To cols2)
+        For c2 = 1 To cols2
+            outArr(1, c2) = lo.HeaderRowRange.Cells(1, c2).Value2
+        Next c2
+        For r = 1 To rows
+            For c2 = 1 To cols2
+                outArr(r + 1, c2) = bodyArr(r, c2)
+            Next c2
+        Next r
+        GetInputMatrix = outArr
+        Exit Function
+    End If
+    Dim lastRow As Long, lastCol As Long
+    lastRow = wsIn.Cells(wsIn.Rows.Count, 1).End(xlUp).Row
+    If lastRow < 2 Then Exit Function
+    lastCol = wsIn.Cells(1, wsIn.Columns.Count).End(xlToLeft).Column
+    GetInputMatrix = wsIn.Range(wsIn.Cells(1, 1), wsIn.Cells(lastRow, lastCol)).Value2
+End Function
+
+Private Function FindHeader(ByVal data As Variant, ByVal name As String) As Long
+    Dim c As Long, target As String
+    target = LCase$(name)
+    For c = 1 To UBound(data, 2)
+        If LCase$(Trim$(CStr(data(1, c)))) = target Then
+            FindHeader = c
+            Exit Function
+        End If
+    Next c
+    FindHeader = 0
+End Function
+
+Private Function IdKeyOf(ByVal idRaw As String) As String
+    Dim s As String
+    s = Trim$(CStr(idRaw))
+    If NORMALIZE_ID_CASE Then s = UCase$(s)
+    IdKeyOf = s
+End Function
+
+Private Function ComputePriority(ByVal linkedCount As Long, ByVal caseName As String, ByVal caseType As String) As Long
+    Dim n As String, t As String
+    n = UCase$(Trim$(caseName))
+    t = Trim$(caseType)
+    If linkedCount = 0 Then
+        ComputePriority = 1
+    ElseIf Left$(n, 3) = "INV" Then
+        ComputePriority = 1
+    ElseIf t = "Manual" Or t = "Parent" Then
+        ComputePriority = 1
+    Else
+        ComputePriority = 0
+    End If
+End Function
+
+Private Function ToExcelDate(ByVal v As Variant) As Double
+    On Error GoTo F
+    If IsEmpty(v) Or IsNull(v) Then GoTo F
+    Dim rawU As String: rawU = Trim$(UCase$(CStr(v)))
+    If rawU = "STILL OPEN" Or rawU = "OPEN" Then GoTo F
+    If IsNumeric(v) Then
+        Dim d As Double: d = CDbl(v)
+        If d > 20000 And d < 100000 Then ToExcelDate = d: Exit Function
+    End If
+    Dim s As String: s = Trim$(CStr(v))
+    If Len(s) = 0 Then GoTo F
+    s = Replace(s, "T", " ")
+    s = Replace(s, "Z", "")
+    Dim sp As Long: sp = InStrRev(s, " ")
+    If sp > 0 Then
+        Dim tail As String: tail = Mid$(s, sp + 1)
+        If Left$(tail, 1) = "+" Or Left$(tail, 1) = "-" Then s = Left$(s, sp - 1)
+    End If
+    If IsDate(s) Then ToExcelDate = CDbl(CDate(s)): Exit Function
+    Dim datePart As String, timePart As String, hasTime As Boolean
+    Dim p As Long: p = InStr(s, " ")
+    If p > 0 Then datePart = Left$(s, p - 1): timePart = Mid$(s, p + 1): hasTime = True Else datePart = s: hasTime = False
+    Dim parts() As String: parts = Split(datePart, "/")
+    If UBound(parts) = 2 Then
+        Dim m As Integer, dday As Integer, y As Integer
+        m = Val(parts(0)): dday = Val(parts(1)): y = Val(parts(2))
+        If y < 100 Then If y < 80 Then y = 2000 + y Else y = 1900 + y
+        If m >= 1 And m <= 12 And dday >= 1 And dday <= 31 Then
+            If hasTime Then ToExcelDate = CDbl(DateSerial(y, m, dday) + TimeValue(ParseTimeFlexible(timePart))) Else ToExcelDate = CDbl(DateSerial(y, m, dday))
+            Exit Function
+        End If
+        If dday >= 1 And dday <= 12 And m >= 1 And m <= 31 Then
+            If hasTime Then ToExcelDate = CDbl(DateSerial(y, dday, m) + TimeValue(ParseTimeFlexible(timePart))) Else ToExcelDate = CDbl(DateSerial(y, dday, m))
+            Exit Function
+        End If
+    End If
+F:
+    ToExcelDate = 0
+End Function
+
+Private Function ParseTimeFlexible(ByVal s As String) As Date
+    On Error GoTo G
+    s = Trim$(s)
+    If s = "" Then ParseTimeFlexible = 0: Exit Function
+    If InStr(s, ":") > 0 Then
+        Dim a As Long: a = InStr(s, ":")
+        Dim b As Long: b = InStr(a + 1, s, ":")
+        If b = 0 Then ParseTimeFlexible = CDate(Left$(s, a - 1) & ":" & Mid$(s, a + 1) & ":00"): Exit Function
+    End If
+    If IsDate(s) Then ParseTimeFlexible = CDate(s): Exit Function
+G:
+    ParseTimeFlexible = 0
+End Function
+
+Private Sub SnapshotAndMergeUserInputs(ByVal wsOut As Worksheet, ByRef dInp As Object)
+    Dim lastRow As Long, r As Long, idDisp As String, idKey As String
+    lastRow = wsOut.Cells(wsOut.Rows.Count, "A").End(xlUp).Row
+    If lastRow < 2 Then Exit Sub
+    For r = 2 To lastRow
+        idDisp = CStr(wsOut.Cells(r, "A").Value)
+        idKey = IdKeyOf(idDisp)
+        If Len(idKey) = 0 Then GoTo N2
+        Dim sr As String, det As String, note As String
+        sr = CStr(wsOut.Cells(r, "D").Value)
+        det = CStr(wsOut.Cells(r, "E").Value)
+        note = CStr(wsOut.Cells(r, "F").Value)
+        If Len(sr) > 0 Or Len(det) > 0 Or Len(note) > 0 Then dInp(idKey) = Array(sr, det, note, CDbl(Now))
+N2:
+    Next r
+End Sub
+
+Private Function LoadInputsStore() As Object
+    Dim ws As Worksheet, lo As ListObject, d As Object
+    Set d = CreateObject("Scripting.Dictionary")
+    Set ws = SheetByName("InputsStore")
+    On Error Resume Next
+    Set lo = ws.ListObjects("T_Inputs")
+    On Error GoTo 0
+    If lo Is Nothing Then
+        ws.Cells.Clear
+        ws.Range("A1:D1").Value = Array("XSOAR_ID", "SeniorReviewer", "Determination", "Notes")
+        Set lo = ws.ListObjects.Add(xlSrcRange, ws.Range("A1:D1"), , True)
+        lo.Name = "T_Inputs"
+        ws.Visible = xlSheetVeryHidden
+        Set LoadInputsStore = d
+        Exit Function
+    End If
+    If lo.DataBodyRange Is Nothing Then
+        ws.Visible = xlSheetVeryHidden
+        Set LoadInputsStore = d
+        Exit Function
+    End If
+    Dim arr As Variant, r As Long, idKey As String
+    arr = lo.DataBodyRange.Value2
+    For r = 1 To UBound(arr, 1)
+        idKey = IdKeyOf(CStr(arr(r, 1)))
+        If Len(idKey) > 0 Then d(idKey) = Array(CStr(arr(r, 2)), CStr(arr(r, 3)), CStr(arr(r, 4)), 0#)
+    Next r
+    ws.Visible = xlSheetVeryHidden
+    Set LoadInputsStore = d
+End Function
+
+Private Sub SaveInputsStore(ByVal dInp As Object)
+    Dim ws As Worksheet, lo As ListObject
+    Set ws = SheetByName("InputsStore")
+    On Error Resume Next
+    Set lo = ws.ListObjects("T_Inputs")
+    On Error GoTo 0
+    If lo Is Nothing Then
+        ws.Cells.Clear
+        ws.Range("A1:D1").Value = Array("XSOAR_ID", "SeniorReviewer", "Determination", "Notes")
+        Set lo = ws.ListObjects.Add(xlSrcRange, ws.Range("A1:D1"), , True)
+        lo.Name = "T_Inputs"
+    End If
+    If Not lo.DataBodyRange Is Nothing Then lo.DataBodyRange.Delete
+    Dim n As Long, k As Variant, outArr() As Variant, i As Long
+    n = dInp.Count
+    If n > 0 Then
+        ReDim outArr(1 To n, 1 To 4)
+        i = 1
+        For Each k In dInp.Keys
+            Dim rec() As Variant
+            rec = dInp(k)
+            outArr(i, 1) = CStr(k)
+            outArr(i, 2) = rec(0)
+            outArr(i, 3) = rec(1)
+            outArr(i, 4) = rec(2)
+            i = i + 1
+        Next k
+        lo.Resize ws.Range("A1").Resize(n + 1, 4)
+        lo.DataBodyRange.Value = outArr
+    Else
+        lo.Resize ws.Range("A1:D1")
+    End If
+    ws.Visible = xlSheetVeryHidden
+End Sub
+
+Private Function LoadPersistStore() As Object
+    Dim ws As Worksheet, lo As ListObject, d As Object
+    Set d = CreateObject("Scripting.Dictionary")
+    Set ws = SheetByName("PersistStore")
+    On Error Resume Next
+    Set lo = ws.ListObjects("T_Persist")
+    On Error GoTo 0
+    If lo Is Nothing Then
+        ws.Cells.Clear
+        ws.Range("A1:E1").Value = Array("XSOAR_ID_Display", "Case Owner", "Manager of Case Owner", "PriorityFlag", "ClosedSerial")
+        Set lo = ws.ListObjects.Add(xlSrcRange, ws.Range("A1:E1"), , True)
+        lo.Name = "T_Persist"
+        ws.Visible = xlSheetVeryHidden
+        Set LoadPersistStore = d
+        Exit Function
+    End If
+    If lo.DataBodyRange Is Nothing Then
+        ws.Visible = xlSheetVeryHidden
+        Set LoadPersistStore = d
+        Exit Function
+    End If
+    Dim arr As Variant, r As Long, idKey As String
+    arr = lo.DataBodyRange.Value2
+    For r = 1 To UBound(arr, 1)
+        idKey = IdKeyOf(CStr(arr(r, 1)))
+        If Len(idKey) > 0 Then d(idKey) = Array(CStr(arr(r, 1)), CStr(arr(r, 2)), CStr(arr(r, 3)), CLng(arr(r, 4)), CDbl(arr(r, 5)))
+    Next r
+    ws.Visible = xlSheetVeryHidden
+    Set LoadPersistStore = d
+End Function
+
+Private Sub SavePersistStore(ByVal dPer As Object)
+    Dim ws As Worksheet, lo As ListObject
+    Set ws = SheetByName("PersistStore")
+    On Error Resume Next
+    Set lo = ws.ListObjects("T_Persist")
+    On Error GoTo 0
+    If lo Is Nothing Then
+        ws.Cells.Clear
+        ws.Range("A1:E1").Value = Array("XSOAR_ID_Display", "Case Owner", "Manager of Case Owner", "PriorityFlag", "ClosedSerial")
+        Set lo = ws.ListObjects.Add(xlSrcRange, ws.Range("A1:E1"), , True)
+        lo.Name = "T_Persist"
+    End If
+    If Not lo.DataBodyRange Is Nothing Then lo.DataBodyRange.Delete
+    Dim n As Long, k As Variant, outArr() As Variant, i As Long
+    n = dPer.Count
+    If n > 0 Then
+        ReDim outArr(1 To n, 1 To 5)
+        i = 1
+        For Each k In dPer.Keys
+            Dim rec() As Variant
+            rec = dPer(k)
+            outArr(i, 1) = rec(0)
+            outArr(i, 2) = rec(1)
+            outArr(i, 3) = rec(2)
+            outArr(i, 4) = CLng(rec(3))
+            outArr(i, 5) = CDbl(rec(4))
+            i = i + 1
+        Next k
+        lo.Resize ws.Range("A1").Resize(n + 1, 5)
+        lo.DataBodyRange.Value = outArr
+    Else
+        lo.Resize ws.Range("A1:E1")
+    End If
+    ws.Visible = xlSheetVeryHidden
+End Sub
+
+Private Sub WriteOutputFromPersist(ByVal wsOut As Worksheet, ByVal dPer As Object, ByVal dInp As Object)
+    wsOut.Rows(1).ClearContents
+    wsOut.Range("A1").Resize(1, 8).Value = Array("XSOAR_ID", "Case Owner", "Manager of Case Owner", "Senior Reviewer", "Determination", "Notes", "PriorityFlag", "Closed Date/Time (UTC)")
+    If wsOut.UsedRange.Rows.Count > 1 Then wsOut.Rows("2:" & wsOut.Rows.Count).ClearContents
+
+    Dim keys As Collection, k As Variant, rec() As Variant
+    Set keys = New Collection
+    For Each k In dPer.Keys
+        rec = dPer(k)
+        If UCase$(Trim$(CStr(rec(2)))) <> "DBOT" Then keys.Add k
+    Next k
+
+    Dim n As Long: n = keys.Count
+    If n = 0 Then Exit Sub
+
+    Dim outArr() As Variant, tmpClosed() As Double
+    ReDim outArr(1 To n, 1 To 8)
+    ReDim tmpClosed(1 To n, 1 To 1)
+
+    Dim i As Long, idKey As String, dispId As String, inp() As Variant
+    i = 1
+    For Each k In keys
+        rec = dPer(k)
+        idKey = CStr(k)
+        dispId = CStr(rec(0))
+        outArr(i, 1) = dispId
+        outArr(i, 2) = rec(1)
+        outArr(i, 3) = rec(2)
+        outArr(i, 7) = rec(3)
+        If CDbl(rec(4)) = 0 Then outArr(i, 8) = "" Else outArr(i, 8) = CDbl(rec(4))
+        tmpClosed(i, 1) = CDbl(rec(4))
+        i = i + 1
+    Next k
+
+    wsOut.Range("A2").Resize(n, 8).Value = outArr
+    wsOut.Range("I1").Value = "ClosedSerial_tmp"
+    wsOut.Range("I2").Resize(n, 1).Value = tmpClosed
+
+    With wsOut.Sort
+        .SortFields.Clear
+        .SortFields.Add Key:=wsOut.Range("G2:G" & n + 1), SortOn:=0, Order:=2, DataOption:=0
+        .SortFields.Add Key:=wsOut.Range("I2:I" & n + 1), SortOn:=0, Order:=2, DataOption:=0
+        .SetRange wsOut.Range("A1:I" & n + 1)
+        .Header = 1
+        .Apply
+    End With
+    wsOut.Columns("I").EntireColumn.Hidden = True
+
+    Dim lastRow As Long, r As Long, idDisp As String
+    lastRow = wsOut.Cells(wsOut.Rows.Count, "A").End(xlUp).Row
+    For r = 2 To lastRow
+        idDisp = CStr(wsOut.Cells(r, "A").Value)
+        idKey = IdKeyOf(idDisp)
+        If dInp.Exists(idKey) Then
+            inp = dInp(idKey)
+            wsOut.Cells(r, "D").Value = inp(0)
+            wsOut.Cells(r, "E").Value = inp(1)
+            wsOut.Cells(r, "F").Value = inp(2)
+        End If
+    Next r
+End Sub
+
+Private Sub EnsureEngineersListName(ByVal wsEng As Worksheet)
+    Dim nm As Name
+    On Error Resume Next
+    Set nm = ThisWorkbook.Names("EngineersList")
+    On Error GoTo 0
+    If nm Is Nothing Then
+        ThisWorkbook.Names.Add Name:="EngineersList", RefersTo:=EngineersRefersTo(wsEng)
+    Else
+        nm.RefersTo = EngineersRefersTo(wsEng)
+    End If
+End Sub
+
+Private Function EngineersRefersTo(ByVal wsEng As Worksheet) As String
+    Dim last As Long
+    last = wsEng.Cells(wsEng.Rows.Count, "A").End(xlUp).Row
+    If last < 2 Then last = 2
+    EngineersRefersTo = "='" & wsEng.Name & "'!$A$2:$A$" & last
+End Function
