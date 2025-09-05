@@ -1,0 +1,8 @@
+=LET(
+  hdr, XMATCH("Status",B$1:B10000,0,-1),
+  statusCol, INDEX(B:B,hdr+1):INDEX(B:B,hdr+100),
+  stepCol,   INDEX(C:C,hdr+1):INDEX(C:C,hdr+100),
+  done, COUNTIF(statusCol,"Completed"),
+  total, COUNTA(stepCol),
+  IFERROR(done/MAX(1,total),0)
+)
