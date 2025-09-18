@@ -14,7 +14,7 @@ Sub ImportTemplate()
     Dim fileSystem As Object
     Dim imageSheetName As String
     
-    imageSheetName = "xlInternalImageStore" ' System sheet. You will not see it.
+    imageSheetName = "xlInternalImageStore"
     
     On Error GoTo ErrorHandler
 
@@ -32,9 +32,9 @@ Sub ImportTemplate()
     End If
     On Error GoTo ErrorHandler
     
-    newTemplateName = wsInput.Range("C6").Value ' ASSUMPTION: Name for new template is in C6
+    newTemplateName = wsInput.Range("B6").Value ' Reads new template name from B6
     If newTemplateName = "" Then
-        MsgBox "Please enter a name for the new template in cell C6 on the 'Input' sheet.", vbExclamation
+        MsgBox "Please enter a name for the new template in cell B6 on the 'Input' sheet.", vbExclamation
         Exit Sub
     End If
 
@@ -70,10 +70,11 @@ Sub ImportTemplate()
         End If
     Next attachment
     
+    ' --- CORRECTED: Writes to the template structure WITHOUT CC ---
     nextTemplateRow = wsTemplates.Cells(wsTemplates.Rows.Count, "A").End(xlUp).Row + 1
     wsTemplates.Cells(nextTemplateRow, "A").Value = newTemplateName
     wsTemplates.Cells(nextTemplateRow, "B").Value = newTemplateSubject
-    wsTemplates.Cells(nextTemplateRow, "D").Value = newTemplateHTML
+    wsTemplates.Cells(nextTemplateRow, "C").Value = newTemplateHTML ' HTML is now in Column C
     
     MsgBox "Template '" & newTemplateName & "' has been successfully imported.", vbInformation, "Import Complete"
     
@@ -111,7 +112,7 @@ Sub GenerateEmail()
     Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
     Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
     Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
-    Set wsPlaceholders = ThisWorkbook.Sheets(PLACEHOLDER_SHEET) ' Set the placeholder sheet
+    Set wsPlaceholders = ThisWorkbook.Sheets(PLACEHOLDER_SHEET)
     
     On Error Resume Next
     Set wsImages = ThisWorkbook.Sheets(imageSheetName)
@@ -121,8 +122,10 @@ Sub GenerateEmail()
         Exit Sub
     End If
     
-    selectedTemplate = wsInput.Range("B3").Value ' Reads Template from B3
-    recipientGroup = wsInput.Range("B4").Value ' Reads Recipient Group from B4
+    ' --- CORRECTED: Reads ALL user inputs from the Input sheet ---
+    selectedTemplate = wsInput.Range("B3").Value
+    recipientGroup = wsInput.Range("B4").Value
+    emailCc = wsInput.Range("B5").Value ' Reads CC from B5
     
     If IsEmpty(selectedTemplate) Then
         MsgBox "Please select a template in cell B3.", vbExclamation, "Template Not Selected"
@@ -141,9 +144,9 @@ Sub GenerateEmail()
         Exit Sub
     End If
     
+    ' --- CORRECTED: Reads from the template structure WITHOUT CC ---
     emailSubject = wsTemplates.Cells(templateRow, "B").Value
-    emailCc = wsTemplates.Cells(templateRow, "C").Value
-    htmlBody = wsTemplates.Cells(templateRow, "D").Value
+    htmlBody = wsTemplates.Cells(templateRow, "C").Value ' HTML is now Column C
 
     On Error Resume Next
     recipientRow = Application.Match(recipientGroup, wsRecipients.Columns("A"), 0)
@@ -177,7 +180,6 @@ Sub GenerateEmail()
         Next shp
     End If
 
-    ' --- CORRECTED: Reads from the dedicated "Placeholders" sheet and filters by selected template ---
     lastPlaceholderRow = wsPlaceholders.Cells(wsPlaceholders.Rows.Count, "A").End(xlUp).Row
     For i = 2 To lastPlaceholderRow
         If wsPlaceholders.Cells(i, "A").Value = selectedTemplate Then
