@@ -96,9 +96,9 @@ End Sub
 Sub GenerateEmail()
 
     Dim olApp As Object, olMail As Object
-    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsImages As Worksheet, wsRecipients As Worksheet
+    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsImages As Worksheet, wsRecipients As Worksheet, wsPlaceholders As Worksheet
     Dim selectedTemplate As String, emailSubject As String, emailTo As String, emailCc As String, htmlBody As String, recipientGroup As String
-    Dim templateRow As Long, recipientRow As Long, i As Long
+    Dim templateRow As Long, recipientRow As Long, lastPlaceholderRow As Long, i As Long
     Dim shp As Shape, chartObj As ChartObject
     Dim tempFilePath As String, tempFileName As String
     Dim fileSystem As Object
@@ -111,6 +111,7 @@ Sub GenerateEmail()
     Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
     Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
     Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
+    Set wsPlaceholders = ThisWorkbook.Sheets(PLACEHOLDER_SHEET) ' Set the placeholder sheet
     
     On Error Resume Next
     Set wsImages = ThisWorkbook.Sheets(imageSheetName)
@@ -176,15 +177,16 @@ Sub GenerateEmail()
         Next shp
     End If
 
-    ' --- CORRECTED: Reads placeholders from the Input sheet starting at A5 ---
-    i = 5 ' Start row for placeholders
-    Do While wsInput.Cells(i, "A").Value <> ""
-        Dim placeholder As String, replacementValue As String
-        placeholder = wsInput.Cells(i, "A").Value
-        replacementValue = wsInput.Cells(i, "B").Value
-        If placeholder <> "" Then htmlBody = Replace(htmlBody, placeholder, replacementValue)
-        i = i + 1
-    Loop
+    ' --- CORRECTED: Reads from the dedicated "Placeholders" sheet and filters by selected template ---
+    lastPlaceholderRow = wsPlaceholders.Cells(wsPlaceholders.Rows.Count, "A").End(xlUp).Row
+    For i = 2 To lastPlaceholderRow
+        If wsPlaceholders.Cells(i, "A").Value = selectedTemplate Then
+            Dim placeholder As String, replacementValue As String
+            placeholder = wsPlaceholders.Cells(i, "B").Value
+            replacementValue = wsPlaceholders.Cells(i, "C").Value
+            If placeholder <> "" Then htmlBody = Replace(htmlBody, placeholder, replacementValue)
+        End If
+    Next i
 
     With olMail
         .To = emailTo
