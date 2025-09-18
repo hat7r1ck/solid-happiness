@@ -118,4 +118,3 @@ ErrorHandler:
     If Not olMail Is Nothing Then olMail.Close 1 ' olDiscard
     MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
 End Sub
-
