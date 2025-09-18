@@ -1,0 +1,112 @@
+'==================================================================================================
+' MACRO 2: The Email Generator (Corrected)
+' Version 14.1 - Fixes the critical bug where placeholders were not being replaced in the Subject line.
+'==================================================================================================
+Sub GenerateEmail()
+
+    Dim olApp As Object, olMail As Object
+    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsImages As Worksheet, wsRecipients As Worksheet
+    Dim selectedTemplate As String, emailSubject As String, emailTo As String, emailCc As String, htmlBody As String, recipientGroup As String
+    Dim templateRow As Long, recipientRow As Long, i As Long
+    Dim shp As Shape, chartObj As ChartObject
+    Dim tempFilePath As String, tempFileName As String
+    Dim fileSystem As Object
+    Dim imageSheetName As String
+    
+    imageSheetName = "xlInternalImageStore"
+    
+    On Error GoTo GenerateErrorHandler
+
+    Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
+    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
+    Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
+    
+    On Error Resume Next
+    Set wsImages = ThisWorkbook.Sheets(imageSheetName)
+    On Error GoTo GenerateErrorHandler
+    If wsImages Is Nothing Then
+        MsgBox "No templates imported. The admin must use the 'Import Template' button first.", vbCritical
+        Exit Sub
+    End If
+    
+    ' --- Reads from the clean layout ---
+    selectedTemplate = wsInput.Range("B2").Value
+    recipientGroup = wsInput.Range("B3").Value
+    emailCc = wsInput.Range("B4").Value
+    
+    If IsEmpty(selectedTemplate) Then MsgBox "Select a template in B2.", vbExclamation: Exit Sub
+    If IsEmpty(recipientGroup) Then MsgBox "Select a recipient group in B3.", vbExclamation: Exit Sub
+
+    On Error Resume Next
+    templateRow = Application.Match(selectedTemplate, wsTemplates.Columns("A"), 0)
+    On Error GoTo GenerateErrorHandler
+    If templateRow = 0 Then MsgBox "Template not found.", vbCritical: Exit Sub
+    
+    ' Get the base subject and body from the template
+    emailSubject = wsTemplates.Cells(templateRow, "B").Value
+    htmlBody = wsTemplates.Cells(templateRow, "C").Value
+
+    On Error Resume Next
+    recipientRow = Application.Match(recipientGroup, wsRecipients.Columns("A"), 0)
+    On Error GoTo GenerateErrorHandler
+    If recipientRow > 0 Then emailTo = wsRecipients.Cells(recipientRow, "B").Value Else emailTo = ""
+    
+    On Error Resume Next
+    Set olApp = GetObject(, "Outlook.Application")
+    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
+    On Error GoTo GenerateErrorHandler
+    Set olMail = olApp.CreateItem(0)
+
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    If wsImages.Shapes.Count > 0 Then
+        For Each shp In wsImages.Shapes
+            tempFileName = shp.Name & ".png"
+            tempFilePath = fileSystem.GetSpecialFolder(2) & "\" & tempFileName
+            Set chartObj = wsImages.ChartObjects.Add(0, 0, shp.Width, shp.Height)
+            chartObj.Activate
+            shp.Copy
+            chartObj.Chart.Paste
+            chartObj.Chart.Export Filename:=tempFilePath, Filtername:="PNG"
+            chartObj.Delete
+            Dim attachment As Object
+            Set attachment = olMail.Attachments.Add(tempFilePath)
+            attachment.PropertyAccessor.SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", shp.Name
+            fileSystem.DeleteFile tempFilePath, True
+        Next shp
+    End If
+
+    ' --- Reads dynamic placeholders and replaces them in BOTH the body AND the subject ---
+    i = 6 ' Start row for placeholders on Input sheet
+    Do While wsInput.Cells(i, "A").Value <> ""
+        Dim placeholder As String, replacementValue As String
+        placeholder = wsInput.Cells(i, "A").Value
+        replacementValue = wsInput.Cells(i, "B").Value
+        If placeholder <> "" Then
+            htmlBody = Replace(htmlBody, placeholder, replacementValue)
+            ' *** THIS IS THE FIX: Replaces placeholders in the subject line ***
+            emailSubject = Replace(emailSubject, placeholder, replacementValue)
+        End If
+        i = i + 1
+    Loop
+
+    With olMail
+        .To = emailTo
+        .CC = emailCc
+        .Subject = emailSubject
+        .HTMLBody = htmlBody
+        .Display
+    End With
+
+    MsgBox "Email '" & selectedTemplate & "' has been generated.", vbInformation
+
+GenerateCleanExit:
+    Set olMail = Nothing
+    Set olApp = Nothing
+    Set fileSystem = Nothing
+    Exit Sub
+
+GenerateErrorHandler:
+    MsgBox "An error occurred." & vbCrLf & "Error #: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical
+    GoTo GenerateCleanExit
+End Sub
+
