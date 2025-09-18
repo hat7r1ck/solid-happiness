@@ -8,7 +8,7 @@ Const RECIPIENT_SHEET As String = "RecipientGroups"
 Const TEMPLATE_FIELDS_SHEET As String = "TemplateFields"
 
 '==================================================================================================
-' MACRO 1: The Template Importer (Runs from Admin sheet)
+' MACRO 1: The Template Importer (Runs from Admin sheet button)
 '==================================================================================================
 Sub ImportTemplate()
 
@@ -42,7 +42,7 @@ Sub ImportTemplate()
     
     newTemplateName = wsAdmin.Range("B2").Value
     If newTemplateName = "" Then
-        MsgBox "Please enter a name for the new template in cell B2 on the 'Admin' sheet.", vbExclamation
+        MsgBox "Enter a name for the new template in cell B2 on the 'Admin' sheet.", vbExclamation
         Exit Sub
     End If
 
@@ -91,8 +91,8 @@ Sub ImportTemplate()
         End If
     Loop While placeholder <> ""
     
-    MsgBox "Template '" & newTemplateName & "' has been successfully imported.", vbInformation, "Import Complete"
-    
+    MsgBox "Template '" & newTemplateName & "' has been successfully imported.", vbInformation
+
 CleanExit:
     Set olApp = Nothing
     Set olMail = Nothing
@@ -101,13 +101,13 @@ CleanExit:
     Exit Sub
 
 ErrorHandler:
-    MsgBox "An import error occurred." & vbCrLf & vbCrLf & "Error #: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical, "VBA Error"
+    MsgBox "An import error occurred." & vbCrLf & "Error #: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical
     GoTo CleanExit
     
 End Sub
 
 '==================================================================================================
-' MACRO 2: The Email Generator (Runs from Input sheet)
+' MACRO 2: The Email Generator (Runs from Input sheet button)
 '==================================================================================================
 Sub GenerateEmail()
 
@@ -136,7 +136,6 @@ Sub GenerateEmail()
         Exit Sub
     End If
     
-    ' --- CORRECTED: Reads from the new, clean layout ---
     selectedTemplate = wsInput.Range("B2").Value
     recipientGroup = wsInput.Range("B3").Value
     emailCc = wsInput.Range("B4").Value
@@ -149,7 +148,6 @@ Sub GenerateEmail()
     On Error GoTo GenerateErrorHandler
     If templateRow = 0 Then MsgBox "Template not found.", vbCritical: Exit Sub
     
-    ' Get the base subject and body from the template
     emailSubject = wsTemplates.Cells(templateRow, "B").Value
     htmlBody = wsTemplates.Cells(templateRow, "C").Value
 
@@ -190,7 +188,6 @@ Sub GenerateEmail()
         replacementValue = wsInput.Cells(i, "B").Value
         If placeholder <> "" Then
             htmlBody = Replace(htmlBody, placeholder, replacementValue)
-            ' *** THIS IS THE FIX: Replaces placeholders in the subject line ***
             emailSubject = Replace(emailSubject, placeholder, replacementValue)
         End If
         i = i + 1
@@ -217,40 +214,3 @@ GenerateErrorHandler:
     GoTo GenerateCleanExit
 End Sub
 
-'==================================================================================================
-' This code goes into the "Input" SHEET MODULE (Right-click tab -> View Code)
-'==================================================================================================
-Private Sub Worksheet_Change(ByVal Target As Range)
-    
-    ' Check if the user changed the template dropdown (now in B2)
-    If Not Intersect(Target, Me.Range("B2")) Is Nothing Then
-        Dim wsFields As Worksheet
-        Dim selectedTemplate As String
-        Dim lastFieldRow As Long, i As Long, writeRow As Long
-        
-        Application.EnableEvents = False
-        
-        On Error GoTo CleanExit
-        
-        Set wsFields = ThisWorkbook.Sheets("TemplateFields")
-        selectedTemplate = Me.Range("B2").Value
-        
-        ' Clear the old placeholder list (now from A6 down)
-        Me.Range("A6:B100").ClearContents
-        
-        If selectedTemplate <> "" Then
-            lastFieldRow = wsFields.Cells(wsFields.Rows.Count, "A").End(xlUp).Row
-            writeRow = 6 ' Starting row for dynamic fields
-            
-            For i = 2 To lastFieldRow
-                If wsFields.Cells(i, "A").Value = selectedTemplate Then
-                    Me.Cells(writeRow, "A").Value = wsFields.Cells(i, "B").Value
-                    writeRow = writeRow + 1
-                End If
-            Next i
-        End If
-    End If
-
-CleanExit:
-    Application.EnableEvents = True
-End Sub
