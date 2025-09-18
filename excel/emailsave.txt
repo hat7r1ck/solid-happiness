@@ -1,184 +1,141 @@
-Option Explicit
-
-'=================================================================================================
-' PART 1: MAIN MODULE CODE
-' This is the engine that runs when you click the button.
-' This section goes into a new Module (Insert > Module).
-'=================================================================================================
-
-Sub GenerateEmail_Final()
+Sub Capture_Email_Template()
     ' --- CONFIGURATION ---
-    Const INPUT_SHEET As String = "Input"
     Const TEMPLATE_SHEET As String = "Templates"
-    Const RECIPIENT_SHEET As String = "RecipientGroup"
-    Const STORAGE_SHEET As String = "Storage"
-    Const TEMPLATE_FIELDS_SHEET As String = "TemplateFields" ' Included for completeness
+    Const TEMPLATE_FIELDS_SHEET As String = "TemplateFields"
 
     ' --- DECLARATIONS ---
-    Dim olApp As Object, olMail As Object
-    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsRecipients As Worksheet, wsStorage As Worksheet
-    Dim selectedTemplate As String, selectedGroup As String, htmlBody As String, tempFolderPath As String
+    Dim olApp As Object, olMail As Object, draftsFolder As Object
+    Dim wsTemplates As Worksheet, wsFields As Worksheet
+    Dim newTemplateName As String
     
     On Error GoTo ErrorHandler
-
-    ' --- INITIALIZE ---
-    Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
-    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
-    Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
-    Set wsStorage = ThisWorkbook.Sheets(STORAGE_SHEET)
-
-    ' --- 1. GET SELECTIONS FROM INPUT SHEET ---
-    selectedTemplate = wsInput.Range("C2").Value
-    selectedGroup = wsInput.Range("C3").Value
-    If selectedTemplate = "" Or selectedGroup = "" Then
-        MsgBox "Template (C2) and Recipient Group (C3) must be selected.", vbExclamation
-        Exit Sub
-    End If
     
-    ' --- 2. LOAD TEMPLATE & RECIPIENT DATA ---
-    Dim templateRow As Range, recipientRow As Range
-    Set templateRow = wsTemplates.Range("A:A").Find(selectedTemplate, LookIn:=xlValues, lookat:=xlWhole)
-    Set recipientRow = wsRecipients.Range("A:A").Find(selectedGroup, LookIn:=xlValues, lookat:=xlWhole)
-
-    If templateRow Is Nothing Then
-        MsgBox "Template '" & selectedTemplate & "' not found in 'Templates' sheet.", vbCritical
-        Exit Sub
-    End If
-    If recipientRow Is Nothing Then
-        MsgBox "Recipient Group '" & selectedGroup & "' not found in 'RecipientGroup' sheet.", vbCritical
-        Exit Sub
-    End If
-    
-    htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value ' Column C: HTMLBody
-    If Trim(htmlBody) = "" Then
-        MsgBox "The HTMLBody for template '" & selectedTemplate & "' is empty.", vbCritical
-        Exit Sub
-    End If
-
-    ' --- 3. CREATE OUTLOOK ITEM ---
+    ' --- 1. GET OUTLOOK AND THE DRAFTS FOLDER ---
     On Error Resume Next
     Set olApp = GetObject(, "Outlook.Application")
-    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
-    On Error GoTo ErrorHandler
-    Set olMail = olApp.CreateItem(0)
-
-    ' --- 4. PRE-LOAD BODY & RECIPIENTS (GUARANTEES EMAIL IS NEVER BLANK) ---
-    With olMail
-        .To = wsRecipients.Cells(recipientRow.Row, "B").Value
-        .CC = wsRecipients.Cells(recipientRow.Row, "C").Value
-        .Subject = wsTemplates.Cells(templateRow.Row, "B").Value
-        .HTMLBody = htmlBody
-    End With
-    
-    ' --- 5. PROCESS & EMBED IMAGES FROM STORAGE SHEET ---
-    Dim fileSystem As Object
-    Set fileSystem = CreateObject("Scripting.FileSystemObject")
-    tempFolderPath = Environ("TEMP") & "\" & fileSystem.GetTempName
-    fileSystem.CreateFolder tempFolderPath
-
-    Dim storageTable As ListObject, storageRow As ListRow
-    Set storageTable = wsStorage.ListObjects("StorageTable")
-    
-    For Each storageRow In storageTable.ListRows
-        If storageRow.Range(1).Value = selectedTemplate Then
-            Dim imageCID As String, imageShapeName As String, tempFilePath As String
-            Dim imageShape As Shape, chartObj As ChartObject
-            
-            imageCID = storageRow.Range(2).Value
-            imageShapeName = storageRow.Range(3).Value
-            
-            On Error Resume Next ' Isolate errors for missing shapes
-            Set imageShape = wsStorage.Shapes(imageShapeName)
-            If Err.Number = 0 Then
-                tempFilePath = tempFolderPath & "\" & imageShapeName & ".png"
-                ' Export shape to a temp file
-                imageShape.CopyPicture Appearance:=xlScreen, Format:=xlPicture
-                Set chartObj = wsStorage.ChartObjects.Add(0, 0, imageShape.Width, imageShape.Height)
-                chartObj.Chart.Paste
-                chartObj.Chart.Export Filename:=tempFilePath, Filtername:="PNG"
-                chartObj.Delete
-                
-                ' Attach the image and set its Content-ID to link it to the HTML
-                olMail.Attachments.Add(tempFilePath).PropertyAccessor.SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", imageCID
-            Else
-                Debug.Print "Warning: Image shape '" & imageShapeName & "' not found on Storage sheet."
-                Err.Clear
-            End If
-            On Error GoTo ErrorHandler
-            Set imageShape = Nothing
-        End If
-    Next storageRow
-
-    ' --- 6. REPLACE TEXT PLACEHOLDERS ---
-    Dim inputTable As ListObject, i As Long
-    Set inputTable = wsInput.ListObjects("InputTable")
-    For i = 1 To inputTable.ListRows.Count
-        Dim placeholder As String, replacementValue As String
-        placeholder = inputTable.DataBodyRange(i, 1).Value
-        replacementValue = inputTable.DataBodyRange(i, 2).Value
-        ' Replace all instances, case-insensitively
-        olMail.HTMLBody = Replace(olMail.HTMLBody, placeholder, replacementValue, 1, -1, vbTextCompare)
-    Next i
-
-    ' --- 7. DISPLAY FINAL EMAIL ---
-    olMail.Display
-    
-Cleanup:
-    On Error Resume Next
-    If Not fileSystem Is Nothing And tempFolderPath <> "" Then
-        If fileSystem.FolderExists(tempFolderPath) Then fileSystem.DeleteFolder tempFolderPath, True
+    If olApp Is Nothing Then
+        MsgBox "Outlook is not running.", vbCritical
+        Exit Sub
     End If
-    Set olMail = Nothing: Set olApp = Nothing: Set fileSystem = Nothing
+    On Error GoTo ErrorHandler
+    
+    Set draftsFolder = olApp.GetNamespace("MAPI").GetDefaultFolder(16) ' olFolderDrafts
+    
+    ' --- 2. BUILD A LIST OF DRAFTS FOR THE USER TO CHOOSE FROM ---
+    Dim draftList As String, i As Long
+    i = 1
+    draftList = "The following emails were found in your Drafts folder." & vbCrLf & vbCrLf
+    
+    For Each olMail In draftsFolder.Items
+        If TypeName(olMail) = "MailItem" Then
+            draftList = draftList & i & ". " & olMail.Subject & vbCrLf
+            i = i + 1
+        End If
+    Next
+    
+    If i = 1 Then
+        MsgBox "No emails found in your Outlook Drafts folder.", vbExclamation
+        Exit Sub
+    End If
+    
+    Dim choice As String
+    choice = InputBox(draftList, "Select a Draft to Capture", "1")
+    If Not IsNumeric(choice) Or choice = "" Then Exit Sub ' User cancelled or entered non-number
+    
+    ' --- 3. RETRIEVE THE CHOSEN EMAIL ---
+    Dim selectedIndex As Long
+    selectedIndex = CLng(choice)
+    Set olMail = Nothing ' Reset before finding the correct one
+    
+    i = 1
+    Dim item As Object
+    For Each item In draftsFolder.Items
+        If TypeName(item) = "MailItem" Then
+            If i = selectedIndex Then
+                Set olMail = item
+                Exit For
+            End If
+            i = i + 1
+        End If
+    Next
+    
+    If olMail Is Nothing Then
+        MsgBox "Invalid selection. Please run the tool again.", vbCritical
+        Exit Sub
+    End If
+
+    ' --- 4. GET TEMPLATE NAME FROM USER ---
+    newTemplateName = InputBox("Enter a unique name for this new template:", "Capture Email Template", olMail.Subject)
+    If Trim(newTemplateName) = "" Then Exit Sub
+
+    ' --- 5. GET WORKSHEETS ---
+    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
+    Set wsFields = ThisWorkbook.Sheets(TEMPLATE_FIELDS_SHEET)
+
+    ' --- 6. ADD TO TEMPLATES SHEET ---
+    Dim nextTemplateRow As Long
+    nextTemplateRow = wsTemplates.Cells(wsTemplates.Rows.Count, "A").End(xlUp).Row + 1
+    wsTemplates.Cells(nextTemplateRow, "A").Value = newTemplateName
+    wsTemplates.Cells(nextTemplateRow, "B").Value = olMail.Subject
+    wsTemplates.Cells(nextTemplateRow, "C").Value = olMail.HTMLBody
+
+    ' --- 7. CAPTURE & STORE EMBEDDED IMAGES ---
+    Dim att As Object, allCIDs As String, allShapeNames As String
+    allCIDs = ""
+    allShapeNames = ""
+
+    For Each att In olMail.Attachments
+        Dim prop As Object, cid As String
+        Set prop = att.PropertyAccessor
+        On Error Resume Next
+        cid = prop.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F")
+        If Err.Number = 0 And cid <> "" Then
+            Dim tempFilePath As String, imageShape As Shape, newShapeName As String
+            tempFilePath = Environ("TEMP") & "\" & att.FileName
+            att.SaveAsFile tempFilePath
+            
+            Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
+            newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
+            imageShape.Name = newShapeName
+            
+            If allCIDs <> "" Then allCIDs = allCIDs & ", "
+            allCIDs = allCIDs & cid
+            
+            If allShapeNames <> "" Then allShapeNames = allShapeNames & ", "
+            allShapeNames = allShapeNames & newShapeName
+            
+            Kill tempFilePath
+        End If
+        Err.Clear
+        On Error GoTo ErrorHandler
+    Next att
+    
+    wsTemplates.Cells(nextTemplateRow, "D").Value = allCIDs
+    wsTemplates.Cells(nextTemplateRow, "E").Value = allShapeNames
+
+    ' --- 8. FIND AND LOG PLACEHOLDERS ---
+    Dim fieldsTable As ListObject, foundPlaceholders As Object, match As Object
+    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
+    Set foundPlaceholders = CreateObject("Scripting.Dictionary")
+    
+    With CreateObject("VBScript.RegExp")
+        .Global = True
+        .Pattern = "\[(.*?)\]"
+        For Each match In .Execute(olMail.HTMLBody)
+            If Not foundPlaceholders.Exists(match.Value) Then
+                foundPlaceholders.Add match.Value, 1
+                Dim newFieldRow As ListRow
+                Set newFieldRow = fieldsTable.ListRows.Add
+                newFieldRow.Range(1).Value = newTemplateName
+                newFieldRow.Range(2).Value = match.Value
+            End If
+        Next
+    End With
+
+    MsgBox "Template '" & newTemplateName & "' captured.", vbInformation
     Exit Sub
 
 ErrorHandler:
-    MsgBox "A critical error occurred:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
-    GoTo Cleanup
+    MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
 End Sub
 
-
-'=================================================================================================
-' PART 2: INPUT SHEET CODE
-' CUT this subroutine below (from Private Sub... to End Sub).
-' PASTE it by DOUBLE-CLICKING the "Input" sheet in the VBA editor on the left.
-'=================================================================================================
-Private Sub Worksheet_Change(ByVal Target As Range)
-    ' This code runs AUTOMATICALLY when the template dropdown in C2 is changed.
-    ' It populates the InputTable with the correct fields for the selected template.
-    
-    ' Only run if the changed cell is C2
-    If Target.Address <> Me.Range("C2").Address Then Exit Sub
-    
-    Application.EnableEvents = False ' Prevent this code from running again while it's working
-    On Error GoTo CleanExit
-    
-    Dim selectedTemplate As String
-    selectedTemplate = Me.Range("C2").Value
-    
-    Dim inputTable As ListObject
-    Set inputTable = Me.ListObjects("InputTable")
-    
-    ' Clear existing data from the input table
-    If inputTable.ListRows.Count > 0 Then
-        inputTable.DataBodyRange.Delete
-    End If
-    
-    ' Exit if no template is selected
-    If selectedTemplate = "" Then GoTo CleanExit
-    
-    ' Find and populate the table with fields from the "TemplateFields" sheet
-    Dim wsFields As Worksheet, fieldsTable As ListObject, fieldRow As ListRow
-    Set wsFields = ThisWorkbook.Sheets("TemplateFields")
-    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
-    
-    For Each fieldRow In fieldsTable.ListRows
-        If fieldRow.Range(1).Value = selectedTemplate Then
-            ' Add a new row to the InputTable and write the placeholder name
-            inputTable.ListRows.Add.Range(1).Value = fieldRow.Range(2).Value
-        End If
-    Next fieldRow
-
-CleanExit:
-    ' IMPORTANT: This line ensures that events are always re-enabled, even if an error occurs.
-    Application.EnableEvents = True
-End Sub
