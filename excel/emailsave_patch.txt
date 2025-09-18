@@ -1,8 +1,8 @@
 Option Explicit
 
 '=================================================================================================
-' PART 1: MAIN EMAIL GENERATOR (FINAL)
-' This goes into Module1. All cell references have been corrected.
+' PART 1: MAIN EMAIL GENERATOR
+' This section goes into Module1.
 '=================================================================================================
 Sub GenerateEmail_Final()
     ' --- CONFIGURATION ---
@@ -25,10 +25,10 @@ Sub GenerateEmail_Final()
     Set wsStorage = ThisWorkbook.Sheets(STORAGE_SHEET)
 
     ' --- 1. GET SELECTIONS FROM INPUT SHEET ---
-    selectedTemplate = wsInput.Range("B2").Value ' CORRECTED FROM C2
-    selectedGroup = wsInput.Range("B3").Value   ' CORRECTED FROM C3
+    selectedTemplate = wsInput.Range("B2").Value ' CORRECTED REFERENCE
+    selectedGroup = wsInput.Range("B3").Value   ' CORRECTED REFERENCE
     If selectedTemplate = "" Or selectedGroup = "" Then
-        MsgBox "Template (B2) and Recipient Group (B3) must be selected.", vbExclamation ' CORRECTED MESSAGE
+        MsgBox "Template (B2) and Recipient Group (B3) must be selected.", vbExclamation
         Exit Sub
     End If
     
@@ -59,7 +59,7 @@ Sub GenerateEmail_Final()
     On Error GoTo ErrorHandler
     Set olMail = olApp.CreateItem(0)
 
-    ' --- 4. PRE-LOAD BODY & RECIPIENTS (GUARANTEES EMAIL IS NEVER BLANK) ---
+    ' --- 4. PRE-LOAD BODY & RECIPIENTS ---
     With olMail
         .To = wsRecipients.Cells(recipientRow.Row, "B").Value
         .CC = wsRecipients.Cells(recipientRow.Row, "C").Value
@@ -67,7 +67,7 @@ Sub GenerateEmail_Final()
         .HTMLBody = htmlBody
     End With
     
-    ' --- 5. PROCESS & EMBED IMAGES FROM STORAGE SHEET ---
+    ' --- 5. PROCESS & EMBED IMAGES ---
     Dim fileSystem As Object
     Set fileSystem = CreateObject("Scripting.FileSystemObject")
     tempFolderPath = Environ("TEMP") & "\" & fileSystem.GetTempName
@@ -84,18 +84,16 @@ Sub GenerateEmail_Final()
             imageCID = storageRow.Range(2).Value
             imageShapeName = storageRow.Range(3).Value
             
-            On Error Resume Next ' Isolate errors for missing shapes
+            On Error Resume Next
             Set imageShape = wsStorage.Shapes(imageShapeName)
             If Err.Number = 0 Then
                 tempFilePath = tempFolderPath & "\" & imageShapeName & ".png"
-                ' Export shape to a temp file
                 imageShape.CopyPicture Appearance:=xlScreen, Format:=xlPicture
                 Set chartObj = wsStorage.ChartObjects.Add(0, 0, imageShape.Width, imageShape.Height)
                 chartObj.Chart.Paste
                 chartObj.Chart.Export Filename:=tempFilePath, Filtername:="PNG"
                 chartObj.Delete
                 
-                ' Attach the image and set its Content-ID to link it to the HTML
                 olMail.Attachments.Add(tempFilePath).PropertyAccessor.SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", imageCID
             Else
                 Debug.Print "Warning: Image shape '" & imageShapeName & "' not found on Storage sheet."
@@ -113,7 +111,6 @@ Sub GenerateEmail_Final()
         Dim placeholder As String, replacementValue As String
         placeholder = inputTable.DataBodyRange(i, 1).Value
         replacementValue = inputTable.DataBodyRange(i, 2).Value
-        ' Replace all instances, case-insensitively
         olMail.HTMLBody = Replace(olMail.HTMLBody, placeholder, replacementValue, 1, -1, vbTextCompare)
     Next i
 
@@ -135,7 +132,7 @@ End Sub
 
 
 '=================================================================================================
-' PART 2: THE "IMPORT EMAIL" CAPTURE TOOL (NO CHANGES NEEDED, BUT INCLUDED FOR COMPLETENESS)
+' PART 2: THE "IMPORT EMAIL" CAPTURE TOOL
 ' This goes into a SEPARATE Module (e.g., Module2).
 '=================================================================================================
 Sub Capture_Email_Template()
@@ -244,21 +241,20 @@ End Sub
 
 
 '=================================================================================================
-' PART 3: INPUT SHEET EVENT HANDLER (FINAL)
+' PART 3: INPUT SHEET EVENT HANDLER
 ' CUT this subroutine and PASTE it into the "Input" sheet's code window.
 '=================================================================================================
 Private Sub Worksheet_Change(ByVal Target As Range)
     ' This code runs AUTOMATICALLY when the template dropdown in B2 is changed.
-    ' It populates the InputTable with the correct fields for the selected template.
     
     ' Only run if the changed cell is B2
-    If Target.Address <> Me.Range("B2").Address Then Exit Sub ' CORRECTED FROM C2
+    If Target.Address <> Me.Range("B2").Address Then Exit Sub ' CORRECTED REFERENCE
     
-    Application.EnableEvents = False ' Prevent this code from running again while it's working
+    Application.EnableEvents = False ' Prevent infinite loops
     On Error GoTo CleanExit
     
     Dim selectedTemplate As String
-    selectedTemplate = Me.Range("B2").Value ' CORRECTED FROM C2
+    selectedTemplate = Me.Range("B2").Value ' CORRECTED REFERENCE
     
     Dim inputTable As ListObject
     Set inputTable = Me.ListObjects("InputTable")
@@ -284,6 +280,6 @@ Private Sub Worksheet_Change(ByVal Target As Range)
     Next fieldRow
 
 CleanExit:
-    ' IMPORTANT: This line ensures that events are always re-enabled, even if an error occurs.
-    Application.EnableEvents = True
+    Application.EnableEvents = True ' Re-enable events
 End Sub
+
