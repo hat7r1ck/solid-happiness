@@ -1,12 +1,12 @@
 Option Explicit
 
 '==================================================================================================
-' MACRO 1: The Template Importer
+' MACRO 1: The Template Importer (Runs from Admin sheet)
 '==================================================================================================
 Sub ImportTemplate()
 
     Dim olApp As Object, olMail As Object, attachment As Object
-    Dim wsTemplates As Worksheet, wsImages As Worksheet, wsInput As Worksheet, wsFields As Worksheet
+    Dim wsTemplates As Worksheet, wsImages As Worksheet, wsAdmin As Worksheet, wsFields As Worksheet
     Dim newTemplateName As String, newTemplateSubject As String, newTemplateHTML As String
     Dim nextTemplateRow As Long, nextFieldRow As Long
     Dim shp As Shape
@@ -18,7 +18,7 @@ Sub ImportTemplate()
     
     On Error GoTo ErrorHandler
 
-    Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
+    Set wsAdmin = ThisWorkbook.Sheets(ADMIN_SHEET)
     Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
     Set wsFields = ThisWorkbook.Sheets(TEMPLATE_FIELDS_SHEET)
     Set fileSystem = CreateObject("Scripting.FileSystemObject")
@@ -33,9 +33,9 @@ Sub ImportTemplate()
     End If
     On Error GoTo ErrorHandler
     
-    newTemplateName = wsInput.Range("B6").Value
+    newTemplateName = wsAdmin.Range("B2").Value
     If newTemplateName = "" Then
-        MsgBox "Please enter a name for the new template in cell B6.", vbExclamation
+        MsgBox "Please enter a name for the new template in cell B2 on the 'Admin' sheet.", vbExclamation
         Exit Sub
     End If
 
@@ -75,9 +75,8 @@ Sub ImportTemplate()
     wsTemplates.Cells(nextTemplateRow, "B").Value = newTemplateSubject
     wsTemplates.Cells(nextTemplateRow, "C").Value = newTemplateHTML
     
-    ' --- NEW: Prompt user to define the fields for this template ---
     Do
-        placeholder = InputBox("Enter a placeholder for the '" & newTemplateName & "' template (e.g. [Date])." & vbCrLf & "Leave blank and click OK when finished.", "Define Template Fields")
+        placeholder = InputBox("Enter a placeholder from the email BODY (e.g. [Date])." & vbCrLf & "Leave blank and click OK when finished.", "Define Template Fields")
         If placeholder <> "" Then
             nextFieldRow = wsFields.Cells(wsFields.Rows.Count, "A").End(xlUp).Row + 1
             wsFields.Cells(nextFieldRow, "A").Value = newTemplateName
@@ -101,7 +100,7 @@ ErrorHandler:
 End Sub
 
 '==================================================================================================
-' MACRO 2: The Email Generator
+' MACRO 2: The Email Generator (Runs from Input sheet)
 '==================================================================================================
 Sub GenerateEmail()
 
@@ -126,16 +125,17 @@ Sub GenerateEmail()
     Set wsImages = ThisWorkbook.Sheets(imageSheetName)
     On Error GoTo GenerateErrorHandler
     If wsImages Is Nothing Then
-        MsgBox "No templates imported. Use the 'Import Template' button first.", vbCritical
+        MsgBox "No templates imported. The admin must use the 'Import Template' button first.", vbCritical
         Exit Sub
     End If
     
-    selectedTemplate = wsInput.Range("B3").Value
-    recipientGroup = wsInput.Range("B4").Value
-    emailCc = wsInput.Range("B5").Value
+    ' --- CORRECTED: Reads from the new, clean layout ---
+    selectedTemplate = wsInput.Range("B2").Value
+    recipientGroup = wsInput.Range("B3").Value
+    emailCc = wsInput.Range("B4").Value
     
-    If IsEmpty(selectedTemplate) Then MsgBox "Select a template in B3.", vbExclamation: Exit Sub
-    If IsEmpty(recipientGroup) Then MsgBox "Select a recipient group in B4.", vbExclamation: Exit Sub
+    If IsEmpty(selectedTemplate) Then MsgBox "Select a template in B2.", vbExclamation: Exit Sub
+    If IsEmpty(recipientGroup) Then MsgBox "Select a recipient group in B3.", vbExclamation: Exit Sub
 
     On Error Resume Next
     templateRow = Application.Match(selectedTemplate, wsTemplates.Columns("A"), 0)
@@ -174,8 +174,8 @@ Sub GenerateEmail()
         Next shp
     End If
 
-    ' --- CORRECTED: Reads the dynamic placeholder list from the Input sheet ---
-    i = 8 ' Start row for placeholders on Input sheet
+    ' --- CORRECTED: Reads dynamic placeholders starting from row 6 ---
+    i = 6
     Do While wsInput.Cells(i, "A").Value <> ""
         Dim placeholder As String, replacementValue As String
         placeholder = wsInput.Cells(i, "A").Value
