@@ -1,207 +1,38 @@
-Option Explicit
-
-'==================================================================================================
-' MACRO 1: The Template Importer (Runs from Admin sheet)
-'==================================================================================================
-Sub ImportTemplate()
-
-    Dim olApp As Object, olMail As Object, attachment As Object
-    Dim wsTemplates As Worksheet, wsImages As Worksheet, wsAdmin As Worksheet, wsFields As Worksheet
-    Dim newTemplateName As String, newTemplateSubject As String, newTemplateHTML As String
-    Dim nextTemplateRow As Long, nextFieldRow As Long
-    Dim shp As Shape
-    Dim tempFilePath As String, msgFilePath As String
-    Dim fileSystem As Object
-    Dim imageSheetName As String, placeholder As String
+Private Sub Worksheet_Change(ByVal Target As Range)
     
-    imageSheetName = "xlInternalImageStore"
+    ' This code runs AUTOMATICALLY when you change the template dropdown in B2.
     
-    On Error GoTo ErrorHandler
-
-    Set wsAdmin = ThisWorkbook.Sheets(ADMIN_SHEET)
-    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
-    Set wsFields = ThisWorkbook.Sheets(TEMPLATE_FIELDS_SHEET)
-    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    Application.EnableEvents = True
     
-    On Error Resume Next
-    Set wsImages = ThisWorkbook.Sheets(imageSheetName)
-    On Error GoTo 0
-    If wsImages Is Nothing Then
-        Set wsImages = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-        wsImages.Name = imageSheetName
-        wsImages.Visible = xlSheetVeryHidden
-    End If
-    On Error GoTo ErrorHandler
-    
-    newTemplateName = wsAdmin.Range("B2").Value
-    If newTemplateName = "" Then
-        MsgBox "Please enter a name for the new template in cell B2 on the 'Admin' sheet.", vbExclamation
-        Exit Sub
+    If Not Intersect(Target, Me.Range("B2")) Is Nothing Then
+        Dim wsFields As Worksheet
+        Dim selectedTemplate As String
+        Dim lastFieldRow As Long, i As Long, writeRow As Long
+        
+        Application.EnableEvents = False
+        
+        On Error GoTo CleanExit
+        
+        Set wsFields = ThisWorkbook.Sheets("TemplateFields")
+        selectedTemplate = Me.Range("B2").Value
+        
+        ' Clear the old placeholder list
+        Me.Range("A6:B100").ClearContents
+        
+        If selectedTemplate <> "" Then
+            lastFieldRow = wsFields.Cells(wsFields.Rows.Count, "A").End(xlUp).Row
+            writeRow = 6 ' Starting row for dynamic fields
+            
+            For i = 2 To lastFieldRow
+                If wsFields.Cells(i, "A").Value = selectedTemplate Then
+                    Me.Cells(writeRow, "A").Value = wsFields.Cells(i, "B").Value
+                    writeRow = writeRow + 1
+                End If
+            Next i
+        End If
     End If
 
-    With Application.FileDialog(3)
-        .Title = "Select the .msg email file to import"
-        .Filters.Clear
-        .Filters.Add "Outlook Messages", "*.msg"
-        If .Show = -1 Then msgFilePath = .SelectedItems(1) Else Exit Sub
-    End With
-
-    On Error Resume Next
-    Set olApp = GetObject(, "Outlook.Application")
-    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
-    On Error GoTo ErrorHandler
-    
-    Set olMail = olApp.CreateItemFromTemplate(msgFilePath)
-    
-    newTemplateSubject = olMail.Subject
-    newTemplateHTML = olMail.HTMLBody
-    
-    For Each attachment In olMail.Attachments
-        Dim cid As String
-        On Error Resume Next
-        cid = attachment.PropertyAccessor.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F")
-        On Error GoTo ErrorHandler
-        If cid <> "" Then
-            tempFilePath = fileSystem.GetSpecialFolder(2) & "\" & attachment.FileName
-            attachment.SaveAsFile tempFilePath
-            Set shp = wsImages.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
-            shp.Name = cid
-            fileSystem.DeleteFile tempFilePath
-        End If
-    Next attachment
-    
-    nextTemplateRow = wsTemplates.Cells(wsTemplates.Rows.Count, "A").End(xlUp).Row + 1
-    wsTemplates.Cells(nextTemplateRow, "A").Value = newTemplateName
-    wsTemplates.Cells(nextTemplateRow, "B").Value = newTemplateSubject
-    wsTemplates.Cells(nextTemplateRow, "C").Value = newTemplateHTML
-    
-    Do
-        placeholder = InputBox("Enter a placeholder from the email BODY (e.g. [Date])." & vbCrLf & "Leave blank and click OK when finished.", "Define Template Fields")
-        If placeholder <> "" Then
-            nextFieldRow = wsFields.Cells(wsFields.Rows.Count, "A").End(xlUp).Row + 1
-            wsFields.Cells(nextFieldRow, "A").Value = newTemplateName
-            wsFields.Cells(nextFieldRow, "B").Value = placeholder
-        End If
-    Loop While placeholder <> ""
-    
-    MsgBox "Template '" & newTemplateName & "' has been successfully imported.", vbInformation, "Import Complete"
-    
 CleanExit:
-    Set olApp = Nothing
-    Set olMail = Nothing
-    Set attachment = Nothing
-    Set fileSystem = Nothing
-    Exit Sub
-
-ErrorHandler:
-    MsgBox "An import error occurred." & vbCrLf & vbCrLf & "Error #: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical, "VBA Error"
-    GoTo CleanExit
-    
-End Sub
-
-'==================================================================================================
-' MACRO 2: The Email Generator (Runs from Input sheet)
-'==================================================================================================
-Sub GenerateEmail()
-
-    Dim olApp As Object, olMail As Object
-    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsImages As Worksheet, wsRecipients As Worksheet
-    Dim selectedTemplate As String, emailSubject As String, emailTo As String, emailCc As String, htmlBody As String, recipientGroup As String
-    Dim templateRow As Long, recipientRow As Long, i As Long
-    Dim shp As Shape, chartObj As ChartObject
-    Dim tempFilePath As String, tempFileName As String
-    Dim fileSystem As Object
-    Dim imageSheetName As String
-    
-    imageSheetName = "xlInternalImageStore"
-    
-    On Error GoTo GenerateErrorHandler
-
-    Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
-    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
-    Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
-    
-    On Error Resume Next
-    Set wsImages = ThisWorkbook.Sheets(imageSheetName)
-    On Error GoTo GenerateErrorHandler
-    If wsImages Is Nothing Then
-        MsgBox "No templates imported. The admin must use the 'Import Template' button first.", vbCritical
-        Exit Sub
-    End If
-    
-    ' --- CORRECTED: Reads from the new, clean layout ---
-    selectedTemplate = wsInput.Range("B2").Value
-    recipientGroup = wsInput.Range("B3").Value
-    emailCc = wsInput.Range("B4").Value
-    
-    If IsEmpty(selectedTemplate) Then MsgBox "Select a template in B2.", vbExclamation: Exit Sub
-    If IsEmpty(recipientGroup) Then MsgBox "Select a recipient group in B3.", vbExclamation: Exit Sub
-
-    On Error Resume Next
-    templateRow = Application.Match(selectedTemplate, wsTemplates.Columns("A"), 0)
-    On Error GoTo GenerateErrorHandler
-    If templateRow = 0 Then MsgBox "Template not found.", vbCritical: Exit Sub
-    
-    emailSubject = wsTemplates.Cells(templateRow, "B").Value
-    htmlBody = wsTemplates.Cells(templateRow, "C").Value
-
-    On Error Resume Next
-    recipientRow = Application.Match(recipientGroup, wsRecipients.Columns("A"), 0)
-    On Error GoTo GenerateErrorHandler
-    If recipientRow > 0 Then emailTo = wsRecipients.Cells(recipientRow, "B").Value Else emailTo = ""
-    
-    On Error Resume Next
-    Set olApp = GetObject(, "Outlook.Application")
-    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
-    On Error GoTo GenerateErrorHandler
-    Set olMail = olApp.CreateItem(0)
-
-    Set fileSystem = CreateObject("Scripting.FileSystemObject")
-    If wsImages.Shapes.Count > 0 Then
-        For Each shp In wsImages.Shapes
-            tempFileName = shp.Name & ".png"
-            tempFilePath = fileSystem.GetSpecialFolder(2) & "\" & tempFileName
-            Set chartObj = wsImages.ChartObjects.Add(0, 0, shp.Width, shp.Height)
-            chartObj.Activate
-            shp.Copy
-            chartObj.Chart.Paste
-            chartObj.Chart.Export Filename:=tempFilePath, Filtername:="PNG"
-            chartObj.Delete
-            Dim attachment As Object
-            Set attachment = olMail.Attachments.Add(tempFilePath)
-            attachment.PropertyAccessor.SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", shp.Name
-            fileSystem.DeleteFile tempFilePath, True
-        Next shp
-    End If
-
-    ' --- CORRECTED: Reads dynamic placeholders starting from row 6 ---
-    i = 6
-    Do While wsInput.Cells(i, "A").Value <> ""
-        Dim placeholder As String, replacementValue As String
-        placeholder = wsInput.Cells(i, "A").Value
-        replacementValue = wsInput.Cells(i, "B").Value
-        If placeholder <> "" Then htmlBody = Replace(htmlBody, placeholder, replacementValue)
-        i = i + 1
-    Loop
-
-    With olMail
-        .To = emailTo
-        .CC = emailCc
-        .Subject = emailSubject
-        .HTMLBody = htmlBody
-        .Display
-    End With
-
-    MsgBox "Email '" & selectedTemplate & "' has been generated.", vbInformation
-
-GenerateCleanExit:
-    Set olMail = Nothing
-    Set olApp = Nothing
-    Set fileSystem = Nothing
-    Exit Sub
-
-GenerateErrorHandler:
-    MsgBox "An error occurred." & vbCrLf & "Error #: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical
-    GoTo GenerateCleanExit
+    Application.EnableEvents = True
 End Sub
 
