@@ -54,7 +54,7 @@ Sub GenerateEmail_Final()
         Exit Sub
     End If
     
-    htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value
+    htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value ' Column C: HTMLBody
     If Trim(htmlBody) = "" Then
         MsgBox "The HTMLBody for template '" & selectedTemplate & "' is empty.", vbCritical
         Exit Sub
@@ -71,7 +71,7 @@ Sub GenerateEmail_Final()
     With olMail
         .To = wsRecipients.Cells(recipientRow.Row, "B").Value
         .CC = wsRecipients.Cells(recipientRow.Row, "C").Value
-        .Subject = wsTemplates.Cells(templateRow.Row, "B").Value
+        .Subject = wsTemplates.Cells(templateRow.Row, "B").Value ' Column B: Subject
         .HTMLBody = htmlBody
     End With
     
@@ -84,7 +84,7 @@ Sub GenerateEmail_Final()
     Dim imageCIDs As Variant, imageShapeNames As Variant
     Dim i As Long
     
-    ' Read the comma-separated lists from the Templates sheet
+    ' Read the comma-separated lists from the Templates sheet columns D and E
     imageCIDs = Split(wsTemplates.Cells(templateRow.Row, "D").Value, ",")
     imageShapeNames = Split(wsTemplates.Cells(templateRow.Row, "E").Value, ",")
 
