@@ -1,9 +1,8 @@
 Option Explicit
 
 '=================================================================================================
-' PART 1: MAIN EMAIL GENERATOR
-' This is the engine for the "Generate Email" button your team will use.
-' This section goes into a new Module (e.g., Module1).
+' PART 1: MAIN EMAIL GENERATOR (FINAL)
+' This goes into Module1. All cell references have been corrected.
 '=================================================================================================
 Sub GenerateEmail_Final()
     ' --- CONFIGURATION ---
@@ -26,10 +25,10 @@ Sub GenerateEmail_Final()
     Set wsStorage = ThisWorkbook.Sheets(STORAGE_SHEET)
 
     ' --- 1. GET SELECTIONS FROM INPUT SHEET ---
-    selectedTemplate = wsInput.Range("C2").Value
-    selectedGroup = wsInput.Range("C3").Value
+    selectedTemplate = wsInput.Range("B2").Value ' CORRECTED FROM C2
+    selectedGroup = wsInput.Range("B3").Value   ' CORRECTED FROM C3
     If selectedTemplate = "" Or selectedGroup = "" Then
-        MsgBox "Template (C2) and Recipient Group (C3) must be selected.", vbExclamation
+        MsgBox "Template (B2) and Recipient Group (B3) must be selected.", vbExclamation ' CORRECTED MESSAGE
         Exit Sub
     End If
     
@@ -136,9 +135,8 @@ End Sub
 
 
 '=================================================================================================
-' PART 2: THE "IMPORT EMAIL" CAPTURE TOOL
-' This is your admin tool to add new templates automatically.
-' This section goes into a SEPARATE Module (e.g., Module2).
+' PART 2: THE "IMPORT EMAIL" CAPTURE TOOL (NO CHANGES NEEDED, BUT INCLUDED FOR COMPLETENESS)
+' This goes into a SEPARATE Module (e.g., Module2).
 '=================================================================================================
 Sub Capture_Email_Template()
     ' --- CONFIGURATION ---
@@ -246,22 +244,21 @@ End Sub
 
 
 '=================================================================================================
-' PART 3: INPUT SHEET EVENT HANDLER
-' CUT this subroutine below (from Private Sub... to End Sub).
-' PASTE it by DOUBLE-CLICKING the "Input" sheet in the VBA editor on the left.
+' PART 3: INPUT SHEET EVENT HANDLER (FINAL)
+' CUT this subroutine and PASTE it into the "Input" sheet's code window.
 '=================================================================================================
 Private Sub Worksheet_Change(ByVal Target As Range)
-    ' This code runs AUTOMATICALLY when the template dropdown in C2 is changed.
+    ' This code runs AUTOMATICALLY when the template dropdown in B2 is changed.
     ' It populates the InputTable with the correct fields for the selected template.
     
-    ' Only run if the changed cell is C2
-    If Target.Address <> Me.Range("C2").Address Then Exit Sub
+    ' Only run if the changed cell is B2
+    If Target.Address <> Me.Range("B2").Address Then Exit Sub ' CORRECTED FROM C2
     
     Application.EnableEvents = False ' Prevent this code from running again while it's working
     On Error GoTo CleanExit
     
     Dim selectedTemplate As String
-    selectedTemplate = Me.Range("C2").Value
+    selectedTemplate = Me.Range("B2").Value ' CORRECTED FROM C2
     
     Dim inputTable As ListObject
     Set inputTable = Me.ListObjects("InputTable")
@@ -290,4 +287,3 @@ CleanExit:
     ' IMPORTANT: This line ensures that events are always re-enabled, even if an error occurs.
     Application.EnableEvents = True
 End Sub
-
