@@ -6,13 +6,13 @@ Option Explicit
 Sub ImportTemplate()
 
     Dim olApp As Object, olMail As Object, attachment As Object
-    Dim wsTemplates As Worksheet, wsImages As Worksheet, wsInput As Worksheet
+    Dim wsTemplates As Worksheet, wsImages As Worksheet, wsInput As Worksheet, wsFields As Worksheet
     Dim newTemplateName As String, newTemplateSubject As String, newTemplateHTML As String
-    Dim nextTemplateRow As Long
+    Dim nextTemplateRow As Long, nextFieldRow As Long
     Dim shp As Shape
     Dim tempFilePath As String, msgFilePath As String
     Dim fileSystem As Object
-    Dim imageSheetName As String
+    Dim imageSheetName As String, placeholder As String
     
     imageSheetName = "xlInternalImageStore"
     
@@ -20,6 +20,7 @@ Sub ImportTemplate()
 
     Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
     Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
+    Set wsFields = ThisWorkbook.Sheets(TEMPLATE_FIELDS_SHEET)
     Set fileSystem = CreateObject("Scripting.FileSystemObject")
     
     On Error Resume Next
@@ -32,9 +33,9 @@ Sub ImportTemplate()
     End If
     On Error GoTo ErrorHandler
     
-    newTemplateName = wsInput.Range("B6").Value ' Reads new template name from B6
+    newTemplateName = wsInput.Range("B6").Value
     If newTemplateName = "" Then
-        MsgBox "Please enter a name for the new template in cell B6 on the 'Input' sheet.", vbExclamation
+        MsgBox "Please enter a name for the new template in cell B6.", vbExclamation
         Exit Sub
     End If
 
@@ -60,7 +61,6 @@ Sub ImportTemplate()
         On Error Resume Next
         cid = attachment.PropertyAccessor.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F")
         On Error GoTo ErrorHandler
-        
         If cid <> "" Then
             tempFilePath = fileSystem.GetSpecialFolder(2) & "\" & attachment.FileName
             attachment.SaveAsFile tempFilePath
@@ -70,11 +70,20 @@ Sub ImportTemplate()
         End If
     Next attachment
     
-    ' --- CORRECTED: Writes to the template structure WITHOUT CC ---
     nextTemplateRow = wsTemplates.Cells(wsTemplates.Rows.Count, "A").End(xlUp).Row + 1
     wsTemplates.Cells(nextTemplateRow, "A").Value = newTemplateName
     wsTemplates.Cells(nextTemplateRow, "B").Value = newTemplateSubject
-    wsTemplates.Cells(nextTemplateRow, "C").Value = newTemplateHTML ' HTML is now in Column C
+    wsTemplates.Cells(nextTemplateRow, "C").Value = newTemplateHTML
+    
+    ' --- NEW: Prompt user to define the fields for this template ---
+    Do
+        placeholder = InputBox("Enter a placeholder for the '" & newTemplateName & "' template (e.g. [Date])." & vbCrLf & "Leave blank and click OK when finished.", "Define Template Fields")
+        If placeholder <> "" Then
+            nextFieldRow = wsFields.Cells(wsFields.Rows.Count, "A").End(xlUp).Row + 1
+            wsFields.Cells(nextFieldRow, "A").Value = newTemplateName
+            wsFields.Cells(nextFieldRow, "B").Value = placeholder
+        End If
+    Loop While placeholder <> ""
     
     MsgBox "Template '" & newTemplateName & "' has been successfully imported.", vbInformation, "Import Complete"
     
@@ -97,9 +106,9 @@ End Sub
 Sub GenerateEmail()
 
     Dim olApp As Object, olMail As Object
-    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsImages As Worksheet, wsRecipients As Worksheet, wsPlaceholders As Worksheet
+    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsImages As Worksheet, wsRecipients As Worksheet
     Dim selectedTemplate As String, emailSubject As String, emailTo As String, emailCc As String, htmlBody As String, recipientGroup As String
-    Dim templateRow As Long, recipientRow As Long, lastPlaceholderRow As Long, i As Long
+    Dim templateRow As Long, recipientRow As Long, i As Long
     Dim shp As Shape, chartObj As ChartObject
     Dim tempFilePath As String, tempFileName As String
     Dim fileSystem As Object
@@ -112,41 +121,29 @@ Sub GenerateEmail()
     Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
     Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
     Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
-    Set wsPlaceholders = ThisWorkbook.Sheets(PLACEHOLDER_SHEET)
     
     On Error Resume Next
     Set wsImages = ThisWorkbook.Sheets(imageSheetName)
     On Error GoTo GenerateErrorHandler
     If wsImages Is Nothing Then
-        MsgBox "No templates imported. Use the 'Import Template' button first.", vbCritical, "System Not Ready"
+        MsgBox "No templates imported. Use the 'Import Template' button first.", vbCritical
         Exit Sub
     End If
     
-    ' --- CORRECTED: Reads ALL user inputs from the Input sheet ---
     selectedTemplate = wsInput.Range("B3").Value
     recipientGroup = wsInput.Range("B4").Value
-    emailCc = wsInput.Range("B5").Value ' Reads CC from B5
+    emailCc = wsInput.Range("B5").Value
     
-    If IsEmpty(selectedTemplate) Then
-        MsgBox "Please select a template in cell B3.", vbExclamation, "Template Not Selected"
-        Exit Sub
-    End If
-    If IsEmpty(recipientGroup) Then
-        MsgBox "Please select a recipient group in cell B4.", vbExclamation, "Recipient Group Not Selected"
-        Exit Sub
-    End If
+    If IsEmpty(selectedTemplate) Then MsgBox "Select a template in B3.", vbExclamation: Exit Sub
+    If IsEmpty(recipientGroup) Then MsgBox "Select a recipient group in B4.", vbExclamation: Exit Sub
 
     On Error Resume Next
     templateRow = Application.Match(selectedTemplate, wsTemplates.Columns("A"), 0)
     On Error GoTo GenerateErrorHandler
-    If templateRow = 0 Then
-        MsgBox "Template '" & selectedTemplate & "' not found in 'Templates' sheet.", vbCritical, "Template Mismatch"
-        Exit Sub
-    End If
+    If templateRow = 0 Then MsgBox "Template not found.", vbCritical: Exit Sub
     
-    ' --- CORRECTED: Reads from the template structure WITHOUT CC ---
     emailSubject = wsTemplates.Cells(templateRow, "B").Value
-    htmlBody = wsTemplates.Cells(templateRow, "C").Value ' HTML is now Column C
+    htmlBody = wsTemplates.Cells(templateRow, "C").Value
 
     On Error Resume Next
     recipientRow = Application.Match(recipientGroup, wsRecipients.Columns("A"), 0)
@@ -164,31 +161,28 @@ Sub GenerateEmail()
         For Each shp In wsImages.Shapes
             tempFileName = shp.Name & ".png"
             tempFilePath = fileSystem.GetSpecialFolder(2) & "\" & tempFileName
-            
             Set chartObj = wsImages.ChartObjects.Add(0, 0, shp.Width, shp.Height)
             chartObj.Activate
             shp.Copy
             chartObj.Chart.Paste
             chartObj.Chart.Export Filename:=tempFilePath, Filtername:="PNG"
             chartObj.Delete
-            
             Dim attachment As Object
             Set attachment = olMail.Attachments.Add(tempFilePath)
             attachment.PropertyAccessor.SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", shp.Name
-            
             fileSystem.DeleteFile tempFilePath, True
         Next shp
     End If
 
-    lastPlaceholderRow = wsPlaceholders.Cells(wsPlaceholders.Rows.Count, "A").End(xlUp).Row
-    For i = 2 To lastPlaceholderRow
-        If wsPlaceholders.Cells(i, "A").Value = selectedTemplate Then
-            Dim placeholder As String, replacementValue As String
-            placeholder = wsPlaceholders.Cells(i, "B").Value
-            replacementValue = wsPlaceholders.Cells(i, "C").Value
-            If placeholder <> "" Then htmlBody = Replace(htmlBody, placeholder, replacementValue)
-        End If
-    Next i
+    ' --- CORRECTED: Reads the dynamic placeholder list from the Input sheet ---
+    i = 8 ' Start row for placeholders on Input sheet
+    Do While wsInput.Cells(i, "A").Value <> ""
+        Dim placeholder As String, replacementValue As String
+        placeholder = wsInput.Cells(i, "A").Value
+        replacementValue = wsInput.Cells(i, "B").Value
+        If placeholder <> "" Then htmlBody = Replace(htmlBody, placeholder, replacementValue)
+        i = i + 1
+    Loop
 
     With olMail
         .To = emailTo
@@ -198,7 +192,7 @@ Sub GenerateEmail()
         .Display
     End With
 
-    MsgBox "Email '" & selectedTemplate & "' has been generated.", vbInformation, "Success"
+    MsgBox "Email '" & selectedTemplate & "' has been generated.", vbInformation
 
 GenerateCleanExit:
     Set olMail = Nothing
@@ -207,7 +201,7 @@ GenerateCleanExit:
     Exit Sub
 
 GenerateErrorHandler:
-    MsgBox "An error occurred." & vbCrLf & vbCrLf & "Error #: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical, "VBA Error"
+    MsgBox "An error occurred." & vbCrLf & "Error #: " & Err.Number & vbCrLf & "Description: " & Err.Description, vbCritical
     GoTo GenerateCleanExit
 End Sub
 
