@@ -4,82 +4,59 @@ Sub Capture_Email_Template()
     Const TEMPLATE_FIELDS_SHEET As String = "TemplateFields"
 
     ' --- DECLARATIONS ---
-    Dim olApp As Object, olMail As Object, draftsFolder As Object
+    Dim olApp As Object, olMail As Object
     Dim wsTemplates As Worksheet, wsFields As Worksheet
-    Dim newTemplateName As String
+    Dim newTemplateName As String, msgFilePath As String
     
     On Error GoTo ErrorHandler
     
-    ' --- 1. GET OUTLOOK AND THE DRAFTS FOLDER ---
+    ' --- 1. PROMPT USER TO SELECT THE .MSG FILE ---
+    With Application.FileDialog(3) ' msoFileDialogFilePicker
+        .Title = "Select the .msg Email Template File"
+        .Filters.Clear
+        .Filters.Add "Outlook Message Files", "*.msg"
+        If .Show = -1 Then
+            msgFilePath = .SelectedItems(1)
+        Else
+            Exit Sub ' User cancelled
+        End If
+    End With
+
+    ' --- 2. OPEN THE .MSG FILE IN OUTLOOK ---
     On Error Resume Next
     Set olApp = GetObject(, "Outlook.Application")
     If olApp Is Nothing Then
-        MsgBox "Outlook is not running.", vbCritical
+        MsgBox "Outlook is not running. Please start Outlook and try again.", vbCritical
         Exit Sub
     End If
     On Error GoTo ErrorHandler
     
-    Set draftsFolder = olApp.GetNamespace("MAPI").GetDefaultFolder(16) ' olFolderDrafts
-    
-    ' --- 2. BUILD A LIST OF DRAFTS FOR THE USER TO CHOOSE FROM ---
-    Dim draftList As String, i As Long
-    i = 1
-    draftList = "The following emails were found in your Drafts folder." & vbCrLf & vbCrLf
-    
-    For Each olMail In draftsFolder.Items
-        If TypeName(olMail) = "MailItem" Then
-            draftList = draftList & i & ". " & olMail.Subject & vbCrLf
-            i = i + 1
-        End If
-    Next
-    
-    If i = 1 Then
-        MsgBox "No emails found in your Outlook Drafts folder.", vbExclamation
-        Exit Sub
-    End If
-    
-    Dim choice As String
-    choice = InputBox(draftList, "Select a Draft to Capture", "1")
-    If Not IsNumeric(choice) Or choice = "" Then Exit Sub ' User cancelled or entered non-number
-    
-    ' --- 3. RETRIEVE THE CHOSEN EMAIL ---
-    Dim selectedIndex As Long
-    selectedIndex = CLng(choice)
-    Set olMail = Nothing ' Reset before finding the correct one
-    
-    i = 1
-    Dim item As Object
-    For Each item In draftsFolder.Items
-        If TypeName(item) = "MailItem" Then
-            If i = selectedIndex Then
-                Set olMail = item
-                Exit For
-            End If
-            i = i + 1
-        End If
-    Next
+    Set olMail = olApp.Session.OpenSharedItem(msgFilePath)
     
     If olMail Is Nothing Then
-        MsgBox "Invalid selection. Please run the tool again.", vbCritical
+        MsgBox "Could not open the selected .msg file. It may be corrupt or in use.", vbCritical
         Exit Sub
     End If
 
-    ' --- 4. GET TEMPLATE NAME FROM USER ---
+    ' --- 3. GET TEMPLATE NAME FROM USER ---
     newTemplateName = InputBox("Enter a unique name for this new template:", "Capture Email Template", olMail.Subject)
-    If Trim(newTemplateName) = "" Then Exit Sub
+    If Trim(newTemplateName) = "" Then
+        olMail.Close 1 ' olDiscard
+        Exit Sub
+    End If
 
-    ' --- 5. GET WORKSHEETS ---
+    ' --- 4. GET WORKSHEETS ---
     Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
     Set wsFields = ThisWorkbook.Sheets(TEMPLATE_FIELDS_SHEET)
 
-    ' --- 6. ADD TO TEMPLATES SHEET ---
+    ' --- 5. ADD TO TEMPLATES SHEET ---
     Dim nextTemplateRow As Long
     nextTemplateRow = wsTemplates.Cells(wsTemplates.Rows.Count, "A").End(xlUp).Row + 1
     wsTemplates.Cells(nextTemplateRow, "A").Value = newTemplateName
     wsTemplates.Cells(nextTemplateRow, "B").Value = olMail.Subject
     wsTemplates.Cells(nextTemplateRow, "C").Value = olMail.HTMLBody
 
-    ' --- 7. CAPTURE & STORE EMBEDDED IMAGES ---
+    ' --- 6. CAPTURE & STORE EMBEDDED IMAGES ---
     Dim att As Object, allCIDs As String, allShapeNames As String
     allCIDs = ""
     allShapeNames = ""
@@ -95,6 +72,7 @@ Sub Capture_Email_Template()
             att.SaveAsFile tempFilePath
             
             Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
+            ' Sanitize filename for the shape name
             newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
             imageShape.Name = newShapeName
             
@@ -113,7 +91,7 @@ Sub Capture_Email_Template()
     wsTemplates.Cells(nextTemplateRow, "D").Value = allCIDs
     wsTemplates.Cells(nextTemplateRow, "E").Value = allShapeNames
 
-    ' --- 8. FIND AND LOG PLACEHOLDERS ---
+    ' --- 7. FIND AND LOG PLACEHOLDERS ---
     Dim fieldsTable As ListObject, foundPlaceholders As Object, match As Object
     Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
     Set foundPlaceholders = CreateObject("Scripting.Dictionary")
@@ -131,11 +109,13 @@ Sub Capture_Email_Template()
             End If
         Next
     End With
-
-    MsgBox "Template '" & newTemplateName & "' captured.", vbInformation
+    
+    olMail.Close 1 ' olDiscard
+    MsgBox "Template '" & newTemplateName & "' captured successfully.", vbInformation
     Exit Sub
 
 ErrorHandler:
+    If Not olMail Is Nothing Then olMail.Close 1 ' olDiscard
     MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
 End Sub
 
