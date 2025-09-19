@@ -404,3 +404,58 @@ Private Sub Worksheet_Change(ByVal Target As Range)
 CleanExit:
     Application.EnableEvents = True
 End Sub
+
+
+
+
+
+++=============
+
+
+Option Explicit
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+    ' Populate placeholder list starting at row 5 when B2 (Template) changes.
+    If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
+
+    On Error GoTo CleanExit
+    Application.EnableEvents = False
+
+    Dim selectedTemplate As String
+    selectedTemplate = Trim$(CStr(Me.Range("B2").Value))
+
+    ' Clear previous list from A5:B(last used)
+    Dim lastRow As Long
+    lastRow = Me.Cells(Me.Rows.Count, "A").End(xlUp).Row
+    If lastRow < 5 Then lastRow = 5
+    Me.Range("A5:B" & lastRow).ClearContents
+
+    If Len(selectedTemplate) = 0 Then GoTo CleanExit
+
+    ' Read placeholders from TemplateFieldsTable and write starting at row 5
+    Dim wsTF As Worksheet, tf As ListObject, lr As ListRow
+    Set wsTF = ThisWorkbook.Sheets("TemplateFields")
+
+    On Error Resume Next
+    Set tf = wsTF.ListObjects("TemplateFieldsTable")
+    On Error GoTo CleanExit
+
+    If tf Is Nothing Then
+        MsgBox "TemplateFieldsTable not found on 'TemplateFields'. Expected columns [TemplateName, FieldName].", vbCritical
+        GoTo CleanExit
+    End If
+
+    Dim writeRow As Long
+    writeRow = 5
+
+    For Each lr In tf.ListRows
+        If CStr(lr.Range(1, 1).Value) = selectedTemplate Then
+            ' Column A = Placeholder, Column B left blank for user value
+            Me.Cells(writeRow, "A").Value = CStr(lr.Range(1, 2).Value)
+            writeRow = writeRow + 1
+        End If
+    Next lr
+
+CleanExit:
+    Application.EnableEvents = True
+End Sub
