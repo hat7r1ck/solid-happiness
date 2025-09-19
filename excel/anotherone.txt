@@ -616,6 +616,59 @@ Cleanup:
     Set olMail = Nothing: Set olApp = Nothing: Set fileSystem = Nothing
     Exit Sub
 
+
+----
+Private Sub Worksheet_Change(ByVal Target As Range)
+    ' FINAL BUILD - This version does NOT use table objects. It is brute-force and resilient.
+
+    ' Only run if the template dropdown in cell B2 is changed.
+    If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
+    
+    ' --- CONFIGURATION ---
+    Const PLACEHOLDER_HEADER_ROW As Long = 5
+    
+    On Error GoTo CleanExit
+    Application.EnableEvents = False ' Prevent this from running again while it works
+    
+    Dim selectedTemplate As String
+    selectedTemplate = Me.Range("B2").Value
+    
+    ' --- 1. SAFE, CONTENT-ONLY CLEAR ---
+    ' Clears only the cell values below the header, leaving all formatting intact.
+    Dim lastDataRow As Long
+    lastDataRow = Me.Cells(Me.Rows.Count, "A").End(xlUp).Row
+    
+    If lastDataRow > PLACEHOLDER_HEADER_ROW Then
+        Me.Range("A" & (PLACEHOLDER_HEADER_ROW + 1) & ":B" & lastDataRow).ClearContents
+    End If
+    
+    If selectedTemplate = "" Then GoTo CleanExit ' Exit if no template is selected
+    
+    ' --- 2. POPULATE THE NEW LIST (DIRECT CELL-READING METHOD) ---
+    Dim wsFields As Worksheet
+    Dim lastFieldRow As Long, i As Long, writeRow As Long
+    
+    Set wsFields = ThisWorkbook.Sheets("TemplateFields")
+    
+    ' Find the last row of data on the TemplateFields sheet.
+    lastFieldRow = wsFields.Cells(wsFields.Rows.Count, "A").End(xlUp).Row
+    
+    ' Start writing on the row below the headers on the Input sheet.
+    writeRow = PLACEHOLDER_HEADER_ROW + 1
+    
+    ' Loop through every row on the TemplateFields sheet.
+    For i = 2 To lastFieldRow ' Assuming headers are in row 1
+        If wsFields.Cells(i, "A").Value = selectedTemplate Then
+            ' If the template name matches, copy the field name to the Input sheet.
+            Me.Cells(writeRow, "A").Value = wsFields.Cells(i, "B").Value
+            writeRow = writeRow + 1 ' Move to the next row to write on.
+        End If
+    Next i
+
+CleanExit:
+    Application.EnableEvents = True ' CRITICAL: Always re-enable events.
+End Sub
+
 ErrorHandler:
     MsgBox "A critical error occurred:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
     GoTo Cleanup
