@@ -1,0 +1,280 @@
+Option Explicit
+
+'=================================================================================================
+' PART 1: FIRST AID & MAIN GENERATOR
+' This code goes into a new, clean module (Module1).
+'=================================================================================================
+
+' First Aid Tool: Run this if the Input sheet ever stops responding to the dropdown.
+Sub Force_Enable_Events()
+    Application.EnableEvents = True
+    MsgBox "Events have been re-enabled.", vbInformation
+End Sub
+
+' Main Engine: This is for the "Generate Email" button.
+Sub GenerateEmail_Final()
+    ' --- CONFIGURATION ---
+    Const INPUT_SHEET As String = "Input"
+    Const TEMPLATE_SHEET As String = "Templates"
+    Const RECIPIENT_SHEET As String = "RecipientGroup"
+
+    ' --- DECLARATIONS ---
+    Dim olApp As Object, olMail As Object
+    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsRecipients As Worksheet
+    Dim selectedTemplate As String, selectedGroup As String, htmlBody As String, tempFolderPath As String
+    
+    On Error GoTo ErrorHandler
+
+    ' --- INITIALIZE ---
+    Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
+    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
+    Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
+
+    ' --- 1. GET SELECTIONS ---
+    selectedTemplate = wsInput.Range("B2").Value
+    selectedGroup = wsInput.Range("B3").Value
+    If selectedTemplate = "" Or selectedGroup = "" Then
+        MsgBox "Template (B2) and Recipient Group (B3) must be selected.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' --- 2. LOAD DATA ---
+    Dim templateRow As Range, recipientRow As Range
+    Set templateRow = wsTemplates.Range("A:A").Find(selectedTemplate, LookIn:=xlValues, lookat:=xlWhole)
+    Set recipientRow = wsRecipients.Range("A:A").Find(selectedGroup, LookIn:=xlValues, lookat:=xlWhole)
+
+    If templateRow Is Nothing Then MsgBox "Template '" & selectedTemplate & "' not found.", vbCritical: Exit Sub
+    If recipientRow Is Nothing Then MsgBox "Recipient Group '" & selectedGroup & "' not found.", vbCritical: Exit Sub
+    
+    htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value
+    If Trim(htmlBody) = "" Then MsgBox "The HTMLBody for template '" & selectedTemplate & "' is empty.", vbCritical: Exit Sub
+
+    ' --- 3. CREATE OUTLOOK ITEM ---
+    On Error Resume Next
+    Set olApp = GetObject(, "Outlook.Application")
+    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
+    On Error GoTo ErrorHandler
+    If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
+    Set olMail = olApp.CreateItem(0)
+
+    ' --- 4. PRE-LOAD BODY & RECIPIENTS ---
+    With olMail
+        .To = wsRecipients.Cells(recipientRow.Row, "B").Value
+        .CC = wsRecipients.Cells(recipientRow.Row, "C").Value
+        .Subject = wsTemplates.Cells(templateRow.Row, "B").Value
+        .HTMLBody = htmlBody
+    End With
+    
+    ' --- 5. PROCESS & EMBED IMAGES ---
+    Dim fileSystem As Object
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    tempFolderPath = Environ("TEMP") & "\" & fileSystem.GetTempName
+    fileSystem.CreateFolder tempFolderPath
+
+    Dim imageCIDs As Variant, imageShapeNames As Variant, i As Long
+    imageCIDs = Split(wsTemplates.Cells(templateRow.Row, "D").Value, ",")
+    imageShapeNames = Split(wsTemplates.Cells(templateRow.Row, "E").Value, ",")
+
+    If UBound(imageCIDs) = UBound(imageShapeNames) Then
+        For i = 0 To UBound(imageCIDs)
+            Dim imageCID As String, imageShapeName As String
+            imageCID = Trim(imageCIDs(i))
+            imageShapeName = Trim(imageShapeNames(i))
+            
+            If imageCID <> "" And imageShapeName <> "" Then
+                Dim imageShape As Shape, chartObj As ChartObject, tempFilePath As String
+                On Error Resume Next
+                Set imageShape = wsTemplates.Shapes(imageShapeName)
+                If Err.Number = 0 Then
+                    tempFilePath = tempFolderPath & "\" & imageShapeName & ".png"
+                    imageShape.CopyPicture Appearance:=xlScreen, Format:=xlPicture
+                    Set chartObj = wsTemplates.ChartObjects.Add(0, 0, imageShape.Width, imageShape.Height)
+                    chartObj.Chart.Paste
+                    chartObj.Chart.Export Filename:=tempFilePath, Filtername:="PNG"
+                    chartObj.Delete
+                    olMail.Attachments.Add(tempFilePath).PropertyAccessor.SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", imageCID
+                Else
+                    Debug.Print "Warning: Image shape '" & imageShapeName & "' not found on Templates sheet."
+                    Err.Clear
+                End If
+                On Error GoTo ErrorHandler
+            End If
+        Next i
+    End If
+
+    ' --- 6. REPLACE TEXT PLACEHOLDERS ---
+    Dim inputTable As ListObject
+    Set inputTable = wsInput.ListObjects("InputTable")
+    For i = 1 To inputTable.ListRows.Count
+        Dim placeholder As String, replacementValue As String
+        placeholder = inputTable.DataBodyRange(i, 1).Value
+        replacementValue = inputTable.DataBodyRange(i, 2).Value
+        olMail.HTMLBody = Replace(olMail.HTMLBody, placeholder, replacementValue, 1, -1, vbTextCompare)
+    Next i
+
+    ' --- 7. DISPLAY FINAL EMAIL ---
+    olMail.Display
+    
+Cleanup:
+    On Error Resume Next
+    If Not fileSystem Is Nothing And tempFolderPath <> "" Then
+        If fileSystem.FolderExists(tempFolderPath) Then fileSystem.DeleteFolder tempFolderPath, True
+    End If
+    Set olMail = Nothing: Set olApp = Nothing: Set fileSystem = Nothing
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "A critical error occurred:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
+    GoTo Cleanup
+End Sub
+
+
+'=================================================================================================
+' PART 2: THE "IMPORT EMAIL" CAPTURE TOOL
+' This code goes into a new, clean module (Module2).
+'=================================================================================================
+Sub Capture_Email_Template()
+    ' --- CONFIGURATION ---
+    Const TEMPLATE_SHEET As String = "Templates"
+    Const TEMPLATE_FIELDS_SHEET As String = "TemplateFields"
+
+    ' --- DECLARATIONS ---
+    Dim olApp As Object, olMail As Object
+    Dim wsTemplates As Worksheet, wsFields As Worksheet
+    Dim newTemplateName As String, msgFilePath As String
+    
+    On Error GoTo ErrorHandler
+    
+    ' --- 1. PROMPT USER TO SELECT THE .MSG FILE ---
+    With Application.FileDialog(3) ' msoFileDialogFilePicker
+        .Title = "Select the .msg Email Template File"
+        .Filters.Clear
+        .Filters.Add "Outlook Message Files", "*.msg"
+        If .Show = -1 Then msgFilePath = .SelectedItems(1) Else Exit Sub
+    End With
+
+    ' --- 2. OPEN THE .MSG FILE ---
+    On Error Resume Next
+    Set olApp = GetObject(, "Outlook.Application")
+    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
+    On Error GoTo ErrorHandler
+    If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
+    
+    Set olMail = olApp.Session.OpenSharedItem(msgFilePath)
+    If olMail Is Nothing Then MsgBox "Could not open the selected .msg file.", vbCritical: Exit Sub
+
+    ' --- 3. GET TEMPLATE NAME ---
+    newTemplateName = InputBox("Enter a unique name for this new template:", "Capture Email Template", olMail.Subject)
+    If Trim(newTemplateName) = "" Then olMail.Close 1: Exit Sub
+
+    ' --- 4. GET WORKSHEETS ---
+    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
+    Set wsFields = ThisWorkbook.Sheets(TEMPLATE_FIELDS_SHEET)
+
+    ' --- 5. ADD TO TEMPLATES SHEET ---
+    Dim nextTemplateRow As Long
+    nextTemplateRow = wsTemplates.Cells(wsTemplates.Rows.Count, "A").End(xlUp).Row + 1
+    wsTemplates.Cells(nextTemplateRow, "A").Value = newTemplateName
+    wsTemplates.Cells(nextTemplateRow, "B").Value = olMail.Subject
+    wsTemplates.Cells(nextTemplateRow, "C").Value = olMail.HTMLBody
+
+    ' --- 6. CAPTURE & STORE IMAGES ---
+    Dim att As Object, allCIDs As String, allShapeNames As String
+    Dim fileSystem As Object, tempFile As Object
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    allCIDs = ""
+    allShapeNames = ""
+
+    For Each att In olMail.Attachments
+        Dim prop As Object, cid As String
+        Set prop = att.PropertyAccessor
+        On Error Resume Next
+        cid = prop.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F")
+        If Err.Number = 0 And cid <> "" Then
+            Dim tempFilePath As String, imageShape As Shape, newShapeName As String
+            tempFilePath = Environ("TEMP") & "\" & att.FileName
+            att.SaveAsFile tempFilePath
+            Set tempFile = fileSystem.GetFile(tempFilePath)
+            If tempFile.Size > 100 Then
+                Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
+                newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
+                imageShape.Name = newShapeName
+                If allCIDs <> "" Then allCIDs = allCIDs & ", "
+                allCIDs = allCIDs & cid
+                If allShapeNames <> "" Then allShapeNames = allShapeNames & ", "
+                allShapeNames = allShapeNames & newShapeName
+            End If
+            Kill tempFilePath
+        End If
+        Err.Clear
+        On Error GoTo ErrorHandler
+    Next att
+    
+    wsTemplates.Cells(nextTemplateRow, "D").Value = allCIDs
+    wsTemplates.Cells(nextTemplateRow, "E").Value = allShapeNames
+
+    ' --- 7. FIND AND LOG PLACEHOLDERS ---
+    Dim fieldsTable As ListObject, foundPlaceholders As Object, match As Object
+    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
+    Set foundPlaceholders = CreateObject("Scripting.Dictionary")
+    
+    With CreateObject("VBScript.RegExp")
+        .Global = True
+        .Pattern = "\{\{([^\}]+?)\}\}"
+        For Each match In .Execute(olMail.HTMLBody)
+            If Not foundPlaceholders.Exists(match.Value) Then
+                foundPlaceholders.Add match.Value, 1
+                Dim newFieldRow As ListRow
+                Set newFieldRow = fieldsTable.ListRows.Add
+                newFieldRow.Range(1).Value = newTemplateName
+                newFieldRow.Range(2).Value = match.Value
+            End If
+        Next
+    End With
+    
+    olMail.Close 1
+    MsgBox "Template '" & newTemplateName & "' captured successfully.", vbInformation
+    Exit Sub
+
+ErrorHandler:
+    If Not olMail Is Nothing Then olMail.Close 1
+    MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
+End Sub
+
+
+'=================================================================================================
+' PART 3: INPUT SHEET EVENT HANDLER
+' This code goes into the "Input" sheet's code window.
+'=================================================================================================
+Private Sub Worksheet_Change(ByVal Target As Range)
+    If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
+    
+    On Error GoTo CleanExit
+    Application.EnableEvents = False
+    
+    Dim selectedTemplate As String
+    selectedTemplate = Me.Range("B2").Value
+    
+    Dim inputTable As ListObject
+    Set inputTable = Me.ListObjects("InputTable")
+    
+    If inputTable.ListRows.Count > 0 Then
+        inputTable.DataBodyRange.Delete
+    End If
+    
+    If selectedTemplate = "" Then GoTo CleanExit
+    
+    Dim wsFields As Worksheet, fieldsTable As ListObject, fieldRow As ListRow
+    Set wsFields = ThisWorkbook.Sheets("TemplateFields")
+    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
+    
+    For Each fieldRow In fieldsTable.ListRows
+        If fieldRow.Range(1).Value = selectedTemplate Then
+            inputTable.ListRows.Add.Range(1).Value = fieldRow.Range(2).Value
+        End If
+    Next fieldRow
+
+CleanExit:
+    Application.EnableEvents = True
+End Sub
+
