@@ -310,3 +310,67 @@ CleanExit:
     Application.EnableEvents = True
 End Sub
 
+
+
+
+
+-----------
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+    ' FINAL, NON-DESTRUCTIVE VERSION
+    ' This code is safe and will not clear cells outside the placeholder area.
+
+    ' Only run if the template dropdown in cell B2 is changed.
+    If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
+    
+    ' --- CONFIGURATION ---
+    Const PLACEHOLDER_START_ROW As Long = 5
+    Const PLACEHOLDER_COL As String = "A"
+    
+    On Error GoTo CleanExit
+    Application.EnableEvents = False ' Prevent this from running again while it works
+    
+    Dim selectedTemplate As String
+    selectedTemplate = Me.Range("B2").Value
+    
+    ' --- 1. SAFE CLEARING LOGIC ---
+    ' This finds the LAST row of the OLD placeholder list in columns A and B
+    ' and clears ONLY that specific area. It will not touch anything below it.
+    Dim lastRowA As Long, lastRowB As Long, lastRowToClear As Long
+    lastRowA = Me.Cells(Me.Rows.Count, "A").End(xlUp).Row
+    lastRowB = Me.Cells(Me.Rows.Count, "B").End(xlUp).Row
+    lastRowToClear = Application.WorksheetFunction.Max(lastRowA, lastRowB)
+    
+    ' Only clear if there's actually data in the placeholder area.
+    If lastRowToClear >= PLACEHOLDER_START_ROW Then
+        Me.Range("A" & PLACEHOLDER_START_ROW & ":B" & lastRowToClear).ClearContents
+    End If
+    
+    ' Set the headers for the placeholder list.
+    Me.Cells(PLACEHOLDER_START_ROW, "A").Value = "Placeholder"
+    Me.Cells(PLACEHOLDER_START_ROW, "B").Value = "Value"
+    
+    If selectedTemplate = "" Then GoTo CleanExit ' Exit if no template is selected
+    
+    ' --- 2. POPULATE THE NEW LIST ---
+    Dim wsFields As Worksheet, fieldsTable As ListObject, fieldRow As ListRow
+    Dim writeRow As Long
+    
+    Set wsFields = ThisWorkbook.Sheets("TemplateFields")
+    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
+    
+    ' Start writing on the row below the headers.
+    writeRow = PLACEHOLDER_START_ROW + 1
+    
+    For Each fieldRow In fieldsTable.ListRows
+        If fieldRow.Range(1).Value = selectedTemplate Then
+            ' Write the placeholder name directly to the cell in column A.
+            Me.Cells(writeRow, PLACEHOLDER_COL).Value = fieldRow.Range(2).Value
+            writeRow = writeRow + 1 ' Move to the next row
+        End If
+    Next fieldRow
+
+CleanExit:
+    Application.EnableEvents = True ' CRITICAL: Always re-enable events.
+End Sub
+
