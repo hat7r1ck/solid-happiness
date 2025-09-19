@@ -1,17 +1,20 @@
 Option Explicit
 
 '=================================================================================================
-' PART 1: FIRST AID & MAIN GENERATOR
-' This code goes into a new, clean module (Module1).
+' PART 1: FIRST AID TOOL
+' This goes into a standard module (Module1).
 '=================================================================================================
-
-' First Aid Tool: Run this if the Input sheet ever stops responding to the dropdown.
 Sub Force_Enable_Events()
     Application.EnableEvents = True
     MsgBox "Events have been re-enabled.", vbInformation
 End Sub
 
-' Main Engine: This is for the "Generate Email" button.
+
+'=================================================================================================
+' PART 2: MAIN EMAIL GENERATOR
+' This is the engine for the "Generate Email" button.
+' This goes into a standard module (Module1).
+'=================================================================================================
 Sub GenerateEmail_Final()
     ' --- CONFIGURATION ---
     Const INPUT_SHEET As String = "Input"
@@ -49,12 +52,19 @@ Sub GenerateEmail_Final()
     htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value
     If Trim(htmlBody) = "" Then MsgBox "The HTMLBody for template '" & selectedTemplate & "' is empty.", vbCritical: Exit Sub
 
-    ' --- 3. CREATE OUTLOOK ITEM ---
+    ' --- 3. CREATE OUTLOOK ITEM (UNBREAKABLE CONNECTION) ---
     On Error Resume Next
     Set olApp = GetObject(, "Outlook.Application")
-    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
+    If Err.Number <> 0 Then
+        Err.Clear
+        Set olApp = CreateObject("Outlook.Application")
+    End If
     On Error GoTo ErrorHandler
-    If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
+    
+    If olApp Is Nothing Then
+        MsgBox "Outlook is not running or could not be started. Please ensure Outlook is open and try again.", vbCritical
+        Exit Sub
+    End If
     Set olMail = olApp.CreateItem(0)
 
     ' --- 4. PRE-LOAD BODY & RECIPIENTS ---
@@ -130,7 +140,7 @@ End Sub
 
 
 '=================================================================================================
-' PART 2: THE "IMPORT EMAIL" CAPTURE TOOL
+' PART 3: THE "IMPORT EMAIL" CAPTURE TOOL
 ' This code goes into a new, clean module (Module2).
 '=================================================================================================
 Sub Capture_Email_Template()
@@ -153,12 +163,19 @@ Sub Capture_Email_Template()
         If .Show = -1 Then msgFilePath = .SelectedItems(1) Else Exit Sub
     End With
 
-    ' --- 2. OPEN THE .MSG FILE ---
+    ' --- 2. OPEN THE .MSG FILE (UNBREAKABLE CONNECTION) ---
     On Error Resume Next
     Set olApp = GetObject(, "Outlook.Application")
-    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
+    If Err.Number <> 0 Then
+        Err.Clear
+        Set olApp = CreateObject("Outlook.Application")
+    End If
     On Error GoTo ErrorHandler
-    If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
+    
+    If olApp Is Nothing Then
+        MsgBox "Outlook is not running or could not be started. Please ensure Outlook is open and try again.", vbCritical
+        Exit Sub
+    End If
     
     Set olMail = olApp.Session.OpenSharedItem(msgFilePath)
     If olMail Is Nothing Then MsgBox "Could not open the selected .msg file.", vbCritical: Exit Sub
@@ -220,14 +237,21 @@ Sub Capture_Email_Template()
     
     With CreateObject("VBScript.RegExp")
         .Global = True
-        .Pattern = "\{\{([^\}]+?)\}\}"
+        .Pattern = "\{\{([^\}]+?)\}\}" ' Step 1: Broadly capture everything
+        
         For Each match In .Execute(olMail.HTMLBody)
-            If Not foundPlaceholders.Exists(match.Value) Then
-                foundPlaceholders.Add match.Value, 1
+            ' Step 2: Clean the captured text of any HTML junk
+            Dim rawContent As String, cleanContent As String, finalPlaceholder As String
+            rawContent = match.SubMatches(0)
+            cleanContent = StripHTMLTags(rawContent)
+            finalPlaceholder = "{{" & Trim(cleanContent) & "}}"
+            
+            If Not foundPlaceholders.Exists(finalPlaceholder) Then
+                foundPlaceholders.Add finalPlaceholder, 1
                 Dim newFieldRow As ListRow
                 Set newFieldRow = fieldsTable.ListRows.Add
                 newFieldRow.Range(1).Value = newTemplateName
-                newFieldRow.Range(2).Value = match.Value
+                newFieldRow.Range(2).Value = finalPlaceholder
             End If
         Next
     End With
@@ -241,9 +265,17 @@ ErrorHandler:
     MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
 End Sub
 
+' Helper function to remove HTML tags from a string
+Private Function StripHTMLTags(htmlText As String) As String
+    With CreateObject("VBScript.RegExp")
+        .Global = True
+        .Pattern = "<[^>]+>"
+        StripHTMLTags = .Replace(htmlText, "")
+    End With
+End Function
 
 '=================================================================================================
-' PART 3: INPUT SHEET EVENT HANDLER
+' PART 4: INPUT SHEET EVENT HANDLER
 ' This code goes into the "Input" sheet's code window.
 '=================================================================================================
 Private Sub Worksheet_Change(ByVal Target As Range)
@@ -277,149 +309,4 @@ Private Sub Worksheet_Change(ByVal Target As Range)
 CleanExit:
     Application.EnableEvents = True
 End Sub
-
-
-
-
-Sub Capture_Email_Template()
-    ' --- CONFIGURATION ---
-    Const TEMPLATE_SHEET As String = "Templates"
-    Const TEMPLATE_FIELDS_SHEET As String = "TemplateFields"
-
-    ' --- DECLARATIONS ---
-    Dim olApp As Object, olMail As Object
-    Dim wsTemplates As Worksheet, wsFields As Worksheet
-    Dim newTemplateName As String, msgFilePath As String
-    
-    On Error GoTo ErrorHandler
-    
-    ' --- 1. PROMPT USER TO SELECT THE .MSG FILE ---
-    With Application.FileDialog(3) ' msoFileDialogFilePicker
-        .Title = "Select the .msg Email Template File"
-        .Filters.Clear
-        .Filters.Add "Outlook Message Files", "*.msg"
-        If .Show = -1 Then
-            msgFilePath = .SelectedItems(1)
-        Else
-            Exit Sub ' User cancelled
-        End If
-    End With
-
-    ' --- 2. OPEN THE .MSG FILE ---
-    On Error Resume Next
-    Set olApp = GetObject(, "Outlook.Application")
-    If olApp Is Nothing Then
-        MsgBox "Outlook is not running. Please start Outlook and try again.", vbCritical
-        Exit Sub
-    End If
-    On Error GoTo ErrorHandler
-    
-    Set olMail = olApp.Session.OpenSharedItem(msgFilePath)
-    
-    If olMail Is Nothing Then
-        MsgBox "Could not open the selected .msg file.", vbCritical
-        Exit Sub
-    End If
-
-    ' --- 3. GET TEMPLATE NAME ---
-    newTemplateName = InputBox("Enter a unique name for this new template:", "Capture Email Template", olMail.Subject)
-    If Trim(newTemplateName) = "" Then
-        olMail.Close 1 ' olDiscard
-        Exit Sub
-    End If
-
-    ' --- 4. GET WORKSHEETS ---
-    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
-    Set wsFields = ThisWorkbook.Sheets(TEMPLATE_FIELDS_SHEET)
-
-    ' --- 5. ADD TO TEMPLATES SHEET ---
-    Dim nextTemplateRow As Long
-    nextTemplateRow = wsTemplates.Cells(wsTemplates.Rows.Count, "A").End(xlUp).Row + 1
-    wsTemplates.Cells(nextTemplateRow, "A").Value = newTemplateName
-    wsTemplates.Cells(nextTemplateRow, "B").Value = olMail.Subject
-    wsTemplates.Cells(nextTemplateRow, "C").Value = olMail.HTMLBody
-
-    ' --- 6. CAPTURE & STORE IMAGES ---
-    Dim att As Object, allCIDs As String, allShapeNames As String
-    Dim fileSystem As Object, tempFile As Object
-    Set fileSystem = CreateObject("Scripting.FileSystemObject")
-    allCIDs = ""
-    allShapeNames = ""
-
-    For Each att In olMail.Attachments
-        Dim prop As Object, cid As String
-        Set prop = att.PropertyAccessor
-        On Error Resume Next
-        cid = prop.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F")
-        If Err.Number = 0 And cid <> "" Then
-            Dim tempFilePath As String, imageShape As Shape, newShapeName As String
-            tempFilePath = Environ("TEMP") & "\" & att.FileName
-            att.SaveAsFile tempFilePath
-            
-            Set tempFile = fileSystem.GetFile(tempFilePath)
-            If tempFile.Size > 100 Then
-                Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
-                newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
-                imageShape.Name = newShapeName
-                
-                If allCIDs <> "" Then allCIDs = allCIDs & ", "
-                allCIDs = allCIDs & cid
-                
-                If allShapeNames <> "" Then allShapeNames = allShapeNames & ", "
-                allShapeNames = allShapeNames & newShapeName
-            End If
-            Kill tempFilePath
-        End If
-        Err.Clear
-        On Error GoTo ErrorHandler
-    Next att
-    
-    wsTemplates.Cells(nextTemplateRow, "D").Value = allCIDs
-    wsTemplates.Cells(nextTemplateRow, "E").Value = allShapeNames
-
-    ' --- 7. FIND AND LOG PLACEHOLDERS ---
-    Dim fieldsTable As ListObject, foundPlaceholders As Object, match As Object
-    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
-    Set foundPlaceholders = CreateObject("Scripting.Dictionary")
-    
-    With CreateObject("VBScript.RegExp")
-        .Global = True
-        .Pattern = "\{\{([^\}]+?)\}\}" ' Step 1: Broadly capture everything inside {{...}}
-        
-        For Each match In .Execute(olMail.HTMLBody)
-            ' *** CRITICAL FIX: Clean the captured text of any HTML junk ***
-            Dim rawContent As String, cleanContent As String, finalPlaceholder As String
-            rawContent = match.SubMatches(0) ' Get the content inside the brackets
-            cleanContent = StripHTMLTags(rawContent) ' Use a helper function to remove HTML tags
-            finalPlaceholder = "{{" & Trim(cleanContent) & "}}" ' Rebuild the clean placeholder
-            
-            If Not foundPlaceholders.Exists(finalPlaceholder) Then
-                foundPlaceholders.Add finalPlaceholder, 1 ' Add to dictionary to prevent duplicates
-                Dim newFieldRow As ListRow
-                Set newFieldrow = fieldsTable.ListRows.Add
-                newFieldrow.Range(1).Value = newTemplateName
-                newFieldrow.Range(2).Value = finalPlaceholder ' Log the clean version
-            End If
-        Next
-    End With
-    
-    olMail.Close 1 ' olDiscard
-    MsgBox "Template '" & newTemplateName & "' captured successfully.", vbInformation
-    Exit Sub
-
-ErrorHandler:
-    If Not olMail Is Nothing Then olMail.Close 1 ' olDiscard
-    MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
-End Sub
-
-' Helper function to remove HTML tags from a string
-Private Function StripHTMLTags(htmlText As String) As String
-    With CreateObject("VBScript.RegExp")
-        .Global = True
-        .Pattern = "<[^>]+>" ' This pattern finds any HTML tag like <...>
-        StripHTMLTags = .Replace(htmlText, "")
-    End With
-End Function
-
-
 
