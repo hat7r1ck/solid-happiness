@@ -1,5 +1,360 @@
 Option Explicit
 
+' =========================
+' First aid, run if Input B2 stops reacting
+' =========================
+Public Sub Force_Enable_Events()
+    Application.EnableEvents = True
+    MsgBox "Events re-enabled."
+End Sub
+
+' =========================
+' Sanity check. Run once if something feels off.
+' =========================
+Public Sub Validate_Config()
+    Dim missing As String
+    On Error Resume Next
+    If ThisWorkbook.Sheets("Input") Is Nothing Then missing = missing & vbCrLf & "- Sheet 'Input'"
+    If ThisWorkbook.Sheets("Templates") Is Nothing Then missing = missing & vbCrLf & "- Sheet 'Templates'"
+    If ThisWorkbook.Sheets("RecipientGroup") Is Nothing Then missing = missing & vbCrLf & "- Sheet 'RecipientGroup'"
+    If ThisWorkbook.Sheets("TemplateFields") Is Nothing Then missing = missing & vbCrLf & "- Sheet 'TemplateFields'"
+    If ThisWorkbook.Sheets("Admin") Is Nothing Then missing = missing & vbCrLf & "- Sheet 'Admin'"
+
+    Dim hasInputTable As Boolean, hasTF As Boolean, hasAdmin As Boolean
+    hasInputTable = Not ThisWorkbook.Sheets("Input").ListObjects("InputTable") Is Nothing
+    hasTF = Not ThisWorkbook.Sheets("TemplateFields").ListObjects("TemplateFieldsTable") Is Nothing
+    hasAdmin = Not ThisWorkbook.Sheets("Admin").ListObjects("AdminTable") Is Nothing
+
+    If missing <> "" Then
+        MsgBox "Missing required sheets:" & missing, vbCritical
+        Exit Sub
+    End If
+    If Not hasInputTable Then
+        MsgBox "Missing table 'InputTable' on sheet 'Input'.", vbCritical: Exit Sub
+    End If
+    If Not hasTF Then
+        MsgBox "Missing table 'TemplateFieldsTable' on sheet 'TemplateFields'.", vbCritical: Exit Sub
+    End If
+    If Not hasAdmin Then
+        MsgBox "Missing table 'AdminTable' on sheet 'Admin'. Create columns [TemplateName, ImageCID, ImageShapeName].", vbExclamation
+    End If
+    MsgBox "Config looks good.", vbInformation
+End Sub
+
+' =========================
+' Helper: build HTML by concatenating Templates!C..Z for the row
+' Allows single-cell HTML in C or multi-cell split across C..Z
+' =========================
+Private Function BuildHtmlFromTemplateRow(ws As Worksheet, ByVal rowNum As Long, Optional startCol As Long = 3) As String
+    Dim html As String, col As Long, part As String
+    For col = startCol To 26 ' C..Z
+        part = CStr(ws.Cells(rowNum, col).Value)
+        If Len(part) = 0 Then Exit For
+        html = html & part
+    Next
+    BuildHtmlFromTemplateRow = html
+End Function
+
+' =========================
+' Helper: safe shape name
+' =========================
+Private Function SanitizeShapeName(ByVal s As String) As String
+    Dim bad As Variant, i As Long
+    bad = Array("[", "]", ":", ";", ",", ".", "/", "\", "*", "?", """", "<", ">", "|", "=", "'", Chr(0))
+    For i = LBound(bad) To UBound(bad)
+        s = Replace(s, CStr(bad(i)), "_")
+    Next
+    If Len(s) = 0 Then s = "img_" & CLng(Timer * 1000)
+    SanitizeShapeName = s
+End Function
+
+' =========================
+' MAIN: Generate email from Input selections
+' Sheets:
+'   Input: B2 Template, B3 RecipientGroup, table InputTable [Placeholder, Value]
+'   Templates: A TemplateName, B Subject, C..Z HTMLBody
+'   RecipientGroup: A GroupName, B To, C CC
+'   TemplateFields: A TemplateName, B FieldName  (used by sheet event)
+'   Admin: AdminTable [TemplateName, ImageCID, ImageShapeName] and images placed on Admin sheet with those shape names
+' =========================
+Public Sub GenerateEmail_Final()
+    Const INPUT_SHEET As String = "Input"
+    Const TPL_SHEET As String = "Templates"
+    Const RG_SHEET As String = "RecipientGroup"
+    Const ADMIN_SHEET As String = "Admin"
+
+    Dim wsIn As Worksheet, wsTpl As Worksheet, wsRG As Worksheet, wsAdm As Worksheet
+    Set wsIn = ThisWorkbook.Sheets(INPUT_SHEET)
+    Set wsTpl = ThisWorkbook.Sheets(TPL_SHEET)
+    Set wsRG = ThisWorkbook.Sheets(RG_SHEET)
+    Set wsAdm = ThisWorkbook.Sheets(ADMIN_SHEET)
+
+    Dim selectedTemplate As String, selectedGroup As String
+    selectedTemplate = Trim(CStr(wsIn.Range("B2").Value))
+    selectedGroup = Trim(CStr(wsIn.Range("B3").Value))
+    If Len(selectedTemplate) = 0 Or Len(selectedGroup) = 0 Then
+        MsgBox "Pick Template in B2 and Recipient Group in B3 on the Input sheet.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim tplRow As Range, rgRow As Range
+    Set tplRow = wsTpl.Range("A:A").Find(What:=selectedTemplate, LookIn:=xlValues, LookAt:=xlWhole)
+    If tplRow Is Nothing Then
+        MsgBox "Template '" & selectedTemplate & "' not found on Templates.", vbCritical
+        Exit Sub
+    End If
+    Set rgRow = wsRG.Range("A:A").Find(What:=selectedGroup, LookIn:=xlValues, LookAt:=xlWhole)
+    If rgRow Is Nothing Then
+        MsgBox "Recipient Group '" & selectedGroup & "' not found on RecipientGroup.", vbCritical
+        Exit Sub
+    End If
+
+    Dim htmlBody As String
+    htmlBody = BuildHtmlFromTemplateRow(wsTpl, tplRow.Row, 3)
+    If Len(Trim$(htmlBody)) = 0 Then
+        MsgBox "HTMLBody empty for template '" & selectedTemplate & "'. Check Templates C..Z.", vbCritical
+        Exit Sub
+    End If
+
+    ' Outlook
+    Dim olApp As Object, olMail As Object
+    On Error Resume Next
+    Set olApp = GetObject(, "Outlook.Application")
+    If olApp Is Nothing Then Set olApp = CreateObject("Outlook.Application")
+    On Error GoTo 0
+    If olApp Is Nothing Then
+        MsgBox "Outlook not available.", vbCritical
+        Exit Sub
+    End If
+    Set olMail = olApp.CreateItem(0)
+
+    ' Preload, guarantees body is not blank even if replacements later fail
+    With olMail
+        .To = CStr(wsRG.Cells(rgRow.Row, "B").Value)
+        .CC = CStr(wsRG.Cells(rgRow.Row, "C").Value)
+        .Subject = CStr(wsTpl.Cells(tplRow.Row, "B").Value)
+        .HTMLBody = htmlBody
+    End With
+
+    ' Embed images by CID from AdminTable, if present
+    Dim adminTable As ListObject
+    On Error Resume Next
+    Set adminTable = wsAdm.ListObjects("AdminTable")
+    On Error GoTo 0
+
+    Dim fso As Object, tempFolder As String
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    tempFolder = Environ$("TEMP") & "\" & fso.GetTempName
+    fso.CreateFolder tempFolder
+
+    If Not adminTable Is Nothing Then
+        Dim lr As ListRow
+        For Each lr In adminTable.ListRows
+            If CStr(lr.Range(1, 1).Value) = selectedTemplate Then
+                Dim cid As String, shapeName As String, shp As Shape, co As ChartObject, tmpPng As String
+                cid = CStr(lr.Range(1, 2).Value)
+                shapeName = CStr(lr.Range(1, 3).Value)
+
+                On Error Resume Next
+                Set shp = wsAdm.Shapes(shapeName)
+                If Err.Number = 0 And Not shp Is Nothing Then
+                    tmpPng = tempFolder & "\" & SanitizeShapeName(shapeName) & ".png"
+                    shp.CopyPicture Appearance:=xlScreen, Format:=xlPicture
+                    Set co = wsAdm.ChartObjects.Add(0, 0, shp.Width, shp.Height)
+                    co.Chart.Paste
+                    co.Chart.Export Filename:=tmpPng, Filtername:="PNG"
+                    co.Delete
+                    olMail.Attachments.Add(tmpPng).PropertyAccessor _
+                        .SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", cid
+                End If
+                Err.Clear
+                On Error GoTo 0
+            End If
+        Next lr
+    End If
+
+    ' Replace placeholders from InputTable, case-insensitive
+    Dim inTable As ListObject, i As Long
+    On Error Resume Next
+    Set inTable = wsIn.ListObjects("InputTable")
+    On Error GoTo 0
+    If Not inTable Is Nothing Then
+        For i = 1 To inTable.ListRows.Count
+            Dim ph As String, val As String
+            ph = CStr(inTable.DataBodyRange(i, 1).Value)
+            val = CStr(inTable.DataBodyRange(i, 2).Value)
+            If Len(ph) > 0 Then
+                olMail.HTMLBody = Replace(olMail.HTMLBody, ph, val, 1, -1, vbTextCompare)
+            End If
+        Next
+    End If
+
+    olMail.Display
+
+Cleanup:
+    On Error Resume Next
+    If Len(tempFolder) > 0 Then
+        If fso.FolderExists(tempFolder) Then fso.DeleteFolder tempFolder, True
+    End If
+    Set fso = Nothing
+    Set olMail = Nothing
+    Set olApp = Nothing
+    Exit Sub
+
+ErrHandler:
+    MsgBox "Fatal error " & Err.Number & ": " & Err.Description, vbCritical
+    Resume Cleanup
+End Sub
+
+' =========================
+' Capture currently open Outlook email as a template
+' Writes Subject to Templates.B
+' Splits HTML across C..Z if large
+' Pulls embedded image CIDs into AdminTable and drops shapes on Admin
+' Extracts unique [placeholders] into TemplateFieldsTable
+' =========================
+Public Sub Capture_Email_Template()
+    Const TPL_SHEET As String = "Templates"
+    Const ADMIN_SHEET As String = "Admin"
+    Const TF_SHEET As String = "TemplateFields"
+
+    Dim wsTpl As Worksheet, wsAdm As Worksheet, wsTF As Worksheet
+    Set wsTpl = ThisWorkbook.Sheets(TPL_SHEET)
+    Set wsAdm = ThisWorkbook.Sheets(ADMIN_SHEET)
+    Set wsTF = ThisWorkbook.Sheets(TF_SHEET)
+
+    Dim olApp As Object, mi As Object
+    On Error Resume Next
+    Set olApp = GetObject(, "Outlook.Application")
+    If olApp Is Nothing Then
+        MsgBox "Open Outlook first.", vbExclamation
+        Exit Sub
+    End If
+    If Not olApp.ActiveInspector Is Nothing Then
+        Set mi = olApp.ActiveInspector.CurrentItem
+    End If
+    If mi Is Nothing Then
+        If Not olApp.ActiveExplorer Is Nothing Then
+            If olApp.ActiveExplorer.Selection.Count > 0 Then
+                Set mi = olApp.ActiveExplorer.Selection.Item(1)
+            End If
+        End If
+    End If
+    On Error GoTo 0
+    If mi Is Nothing Then
+        MsgBox "Open the email to capture in Outlook.", vbExclamation
+        Exit Sub
+    End If
+    If LCase$(TypeName(mi)) <> "mailitem" Then
+        MsgBox "Selected Outlook item is not an email.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim tplName As String
+    tplName = InputBox("Template name:", "Capture Email Template")
+    If Len(Trim$(tplName)) = 0 Then Exit Sub
+
+    ' Write row in Templates
+    Dim r As Long, html As String, subj As String
+    r = wsTpl.Cells(wsTpl.Rows.Count, "A").End(xlUp).Row
+    If r < 1 Or Len(wsTpl.Cells(1, "A").Value) > 0 Then r = r + 1 Else r = 2
+    subj = CStr(mi.Subject)
+    html = CStr(mi.HTMLBody)
+
+    wsTpl.Cells(r, "A").Value = tplName
+    wsTpl.Cells(r, "B").Value = subj
+
+    ' C..Z chunking
+    Dim maxChunk As Long: maxChunk = 30000
+    Dim idx As Long, col As Long, totalLen As Long
+    totalLen = Len(html): idx = 1: col = 3
+    Do While idx <= totalLen And col <= 26
+        wsTpl.Cells(r, col).Value = Mid$(html, idx, maxChunk)
+        idx = idx + maxChunk
+        col = col + 1
+    Loop
+    If idx <= totalLen Then
+        MsgBox "Warning. HTML exceeded columns C..Z and was truncated. Add more columns.", vbExclamation
+    End If
+
+    ' Admin images by CID
+    Dim admTable As ListObject
+    On Error Resume Next
+    Set admTable = wsAdm.ListObjects("AdminTable")
+    On Error GoTo 0
+    If admTable Is Nothing Then
+        MsgBox "AdminTable not found on Admin. Create columns [TemplateName, ImageCID, ImageShapeName].", vbCritical
+        Exit Sub
+    End If
+
+    Dim att As Object
+    For Each att In mi.Attachments
+        On Error Resume Next
+        Dim cid As String
+        cid = att.PropertyAccessor.GetProperty("http://schemas.microsoft.com/mapi/proptag/0x3712001F")
+        If Err.Number <> 0 Then cid = "": Err.Clear
+        On Error GoTo 0
+
+        If Len(cid) > 0 Then
+            Dim tmp As String, shp As Shape, nm As String
+            tmp = Environ$("TEMP") & "\" & att.FileName
+            att.SaveAsFile tmp
+            Set shp = wsAdm.Shapes.AddPicture(tmp, msoFalse, msoTrue, 10, 10, -1, -1)
+            nm = SanitizeShapeName(tplName & "_" & att.FileName)
+            shp.Name = nm
+
+            Dim newRow As ListRow
+            Set newRow = admTable.ListRows.Add
+            newRow.Range(1, 1).Value = tplName
+            newRow.Range(1, 2).Value = cid
+            newRow.Range(1, 3).Value = nm
+
+            On Error Resume Next: Kill tmp: On Error GoTo 0
+        End If
+    Next att
+
+    ' Extract unique [placeholders] into TemplateFieldsTable
+    Dim tf As ListObject
+    On Error Resume Next
+    Set tf = wsTF.ListObjects("TemplateFieldsTable")
+    On Error GoTo 0
+    If tf Is Nothing Then
+        MsgBox "TemplateFieldsTable not found on TemplateFields. Create columns [TemplateName, FieldName].", vbCritical
+        Exit Sub
+    End If
+
+    Dim re As Object, m As Object, seen As Object
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.IgnoreCase = True
+    re.Pattern = "\[[^\]]+\]"
+    Set seen = CreateObject("Scripting.Dictionary")
+
+    Dim concatHtml As String, c As Long
+    For c = 3 To 26
+        If Len(wsTpl.Cells(r, c).Value) = 0 Then Exit For
+        concatHtml = concatHtml & CStr(wsTpl.Cells(r, c).Value)
+    Next
+
+    If re.Test(concatHtml) Then
+        For Each m In re.Execute(concatHtml)
+            If Not seen.Exists(m.Value) Then
+                seen.Add m.Value, 1
+                Dim lr As ListRow
+                Set lr = tf.ListRows.Add
+                lr.Range(1, 1).Value = tplName
+                lr.Range(1, 2).Value = m.Value
+            End If
+        Next
+    End If
+
+    MsgBox "Captured template '" & tplName & "'.", vbInformation
+End Sub
+
+
+-----
+Option Explicit
+
 Private Sub Worksheet_Change(ByVal Target As Range)
     ' Auto-populate InputTable with fields for the Template selected in B2
     If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
