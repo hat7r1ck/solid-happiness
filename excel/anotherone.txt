@@ -2,7 +2,7 @@ Option Explicit
 
 '=================================================================================================
 ' PART 1: UTILITY & MAIN GENERATOR
-' This code goes into a standard module (e.g., Module1).
+' This code goes into a new, clean module (e.g., Module1).
 '=================================================================================================
 
 ' First Aid Tool: Run this if the Input sheet ever stops responding.
@@ -17,6 +17,7 @@ Sub GenerateEmail_Final()
     Const INPUT_SHEET As String = "Input"
     Const TEMPLATE_SHEET As String = "Templates"
     Const RECIPIENT_SHEET As String = "RecipientGroup"
+    Const PLACEHOLDER_START_ROW As Long = 6 ' Data starts at row 6, below headers at row 5
 
     ' --- DECLARATIONS ---
     Dim olApp As Object, olMail As Object
@@ -105,15 +106,18 @@ Sub GenerateEmail_Final()
         Next i
     End If
 
-    ' --- 6. REPLACE TEXT PLACEHOLDERS ---
-    Dim inputTable As ListObject
-    Set inputTable = wsInput.ListObjects("InputTable")
-    For i = 1 To inputTable.ListRows.Count
+    ' --- 6. REPLACE TEXT PLACEHOLDERS (BRUTE-FORCE METHOD) ---
+    ' This method does NOT use a table object. It reads directly from the cells.
+    Dim currentRow As Long
+    currentRow = PLACEHOLDER_START_ROW
+    
+    Do While wsInput.Cells(currentRow, "A").Value <> ""
         Dim placeholder As String, replacementValue As String
-        placeholder = inputTable.DataBodyRange(i, 1).Value
-        replacementValue = inputTable.DataBodyRange(i, 2).Value
+        placeholder = wsInput.Cells(currentRow, "A").Value
+        replacementValue = wsInput.Cells(currentRow, "B").Value
         olMail.HTMLBody = Replace(olMail.HTMLBody, placeholder, replacementValue, 1, -1, vbTextCompare)
-    Next i
+        currentRow = currentRow + 1
+    Loop
 
     ' --- 7. DISPLAY FINAL EMAIL ---
     olMail.Display
@@ -221,7 +225,12 @@ Sub Capture_Email_Template()
 
     ' --- 7. FIND AND LOG PLACEHOLDERS ---
     Dim fieldsTable As ListObject, foundPlaceholders As Object, match As Object
-    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
+    If wsFields.ListObjects.Count = 0 Then
+        MsgBox "FATAL ERROR: No table found on the 'TemplateFields' sheet.", vbCritical
+        olMail.Close 1
+        Exit Sub
+    End If
+    Set fieldsTable = wsFields.ListObjects(1) ' Find table by index, not name
     Set foundPlaceholders = CreateObject("Scripting.Dictionary")
     
     With CreateObject("VBScript.RegExp")
@@ -294,7 +303,11 @@ Private Sub Worksheet_Change(ByVal Target As Range)
     Dim writeRow As Long
     
     Set wsFields = ThisWorkbook.Sheets("TemplateFields")
-    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
+    If wsFields.ListObjects.Count = 0 Then
+        MsgBox "FATAL ERROR: No table found on 'TemplateFields' sheet.", vbCritical
+        GoTo CleanExit
+    End If
+    Set fieldsTable = wsFields.ListObjects(1) ' Find table by index, not name
     
     writeRow = PLACEHOLDER_HEADER_ROW + 1
     
