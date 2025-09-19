@@ -1,0 +1,49 @@
+Option Explicit
+
+Private Sub Worksheet_Change(ByVal Target As Range)
+    ' Auto-populate InputTable with fields for the Template selected in B2
+    If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
+
+    On Error GoTo CleanExit
+    Application.EnableEvents = False
+
+    Dim selectedTemplate As String
+    selectedTemplate = Trim(CStr(Me.Range("B2").Value))
+
+    Dim tbl As ListObject
+    On Error Resume Next
+    Set tbl = Me.ListObjects("InputTable")
+    On Error GoTo CleanExit
+    If tbl Is Nothing Then
+        MsgBox "InputTable not found on Input. Create a table with columns [Placeholder, Value].", vbCritical
+        GoTo CleanExit
+    End If
+
+    ' Clear rows
+    If tbl.ListRows.Count > 0 Then tbl.DataBodyRange.Delete
+
+    If Len(selectedTemplate) = 0 Then GoTo CleanExit
+
+    ' Load from TemplateFieldsTable
+    Dim wsTF As Worksheet, tf As ListObject, lr As ListRow
+    Set wsTF = ThisWorkbook.Sheets("TemplateFields")
+    On Error Resume Next
+    Set tf = wsTF.ListObjects("TemplateFieldsTable")
+    On Error GoTo CleanExit
+    If tf Is Nothing Then
+        MsgBox "TemplateFieldsTable not found on TemplateFields.", vbCritical
+        GoTo CleanExit
+    End If
+
+    For Each lr In tf.ListRows
+        If CStr(lr.Range(1, 1).Value) = selectedTemplate Then
+            Dim newRow As ListRow
+            Set newRow = tbl.ListRows.Add
+            newRow.Range(1, 1).Value = CStr(lr.Range(1, 2).Value) ' Placeholder name
+            ' Value cell left blank for user input
+        End If
+    Next lr
+
+CleanExit:
+    Application.EnableEvents = True
+End Sub
