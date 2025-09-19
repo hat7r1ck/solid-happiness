@@ -22,7 +22,7 @@ Sub Capture_Email_Template()
         End If
     End With
 
-    ' --- 2. OPEN THE .MSG FILE IN OUTLOOK ---
+    ' --- 2. OPEN THE .MSG FILE ---
     On Error Resume Next
     Set olApp = GetObject(, "Outlook.Application")
     If olApp Is Nothing Then
@@ -34,11 +34,11 @@ Sub Capture_Email_Template()
     Set olMail = olApp.Session.OpenSharedItem(msgFilePath)
     
     If olMail Is Nothing Then
-        MsgBox "Could not open the selected .msg file. It may be corrupt or in use.", vbCritical
+        MsgBox "Could not open the selected .msg file.", vbCritical
         Exit Sub
     End If
 
-    ' --- 3. GET TEMPLATE NAME FROM USER ---
+    ' --- 3. GET TEMPLATE NAME ---
     newTemplateName = InputBox("Enter a unique name for this new template:", "Capture Email Template", olMail.Subject)
     If Trim(newTemplateName) = "" Then
         olMail.Close 1 ' olDiscard
@@ -56,7 +56,7 @@ Sub Capture_Email_Template()
     wsTemplates.Cells(nextTemplateRow, "B").Value = olMail.Subject
     wsTemplates.Cells(nextTemplateRow, "C").Value = olMail.HTMLBody
 
-    ' --- 6. CAPTURE & STORE EMBEDDED IMAGES ---
+    ' --- 6. CAPTURE & STORE IMAGES ---
     Dim att As Object, allCIDs As String, allShapeNames As String
     Dim fileSystem As Object, tempFile As Object
     Set fileSystem = CreateObject("Scripting.FileSystemObject")
@@ -73,25 +73,18 @@ Sub Capture_Email_Template()
             tempFilePath = Environ("TEMP") & "\" & att.FileName
             att.SaveAsFile tempFilePath
             
-            ' *** CRITICAL FIX: VALIDATE THE IMAGE FILE BEFORE ADDING IT ***
             Set tempFile = fileSystem.GetFile(tempFilePath)
-            If tempFile.Size > 0 Then ' Check if the file is not empty
-                Dim ext As String
-                ext = LCase(fileSystem.GetExtensionName(tempFilePath))
-                If ext = "jpg" Or ext = "jpeg" Or ext = "png" Or ext = "gif" Or ext = "bmp" Then
-                    ' This is a REAL image, so add it
-                    Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
-                    newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
-                    imageShape.Name = newShapeName
-                    
-                    If allCIDs <> "" Then allCIDs = allCIDs & ", "
-                    allCIDs = allCIDs & cid
-                    
-                    If allShapeNames <> "" Then allShapeNames = allShapeNames & ", "
-                    allShapeNames = allShapeNames & newShapeName
-                End If
+            If tempFile.Size > 100 Then
+                Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
+                newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
+                imageShape.Name = newShapeName
+                
+                If allCIDs <> "" Then allCIDs = allCIDs & ", "
+                allCIDs = allCIDs & cid
+                
+                If allShapeNames <> "" Then allShapeNames = allShapeNames & ", "
+                allShapeNames = allShapeNames & newShapeName
             End If
-            
             Kill tempFilePath
         End If
         Err.Clear
@@ -108,7 +101,9 @@ Sub Capture_Email_Template()
     
     With CreateObject("VBScript.RegExp")
         .Global = True
-        .Pattern = "\[(.*?)\]"
+        ' *** CRITICAL FIX: This pattern ONLY finds {{Placeholder_Name}} ***
+        .Pattern = "\{\{([a-zA-Z0-9_]+?)\}\}"
+        
         For Each match In .Execute(olMail.HTMLBody)
             If Not foundPlaceholders.Exists(match.Value) Then
                 foundPlaceholders.Add match.Value, 1
