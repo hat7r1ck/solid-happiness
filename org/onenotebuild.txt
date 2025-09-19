@@ -1,0 +1,212 @@
+Setup checklist
+	1.	Create a new notebook named SOC Ops.
+	2.	Add sections in this exact order:
+	•	00-Inbox
+	•	01-Active
+	•	02-Incidents
+	•	03-Detections
+	•	04-Queries
+	•	05-Playbooks
+	•	06-Training
+	•	07-Intel
+	•	08-Reference
+	•	99-Archive
+	3.	Create these custom tags:
+	•	[ACT] actionable
+	•	[WAIT] pending or blocked
+	•	[REF] stable reference
+	•	[QUERY] runnable query
+	•	[IOC] indicators present
+	•	[TTP] technique notes
+	•	[CHK] checklist step
+	•	[COMM] stakeholder comms
+	•	[TUNE] detection tuning
+	•	[GAP] coverage gap
+	4.	In 04-Queries, create subpages for the tools you actually use: Splunk, Chronicle, XSOAR, CrowdStrike, M365, Prisma.
+	5.	Pin 01-Active to your OneNote Favorites bar. Keep it first.
+
+⸻
+
+Create initial pages
+
+Paste the block under each section. Use the provided page titles verbatim.
+
+00-Inbox
+	•	Page: YYYY-MM-DD HHmm - dump
+
+SRC: Outlook | Teams | Screenshot
+Brief: one line of context
+[ACT] Next step:
+
+01-Active
+	•	Page: YYYY-MM-DD - <incident shortname> - ACTIVE
+
+Context
+- Summary:
+- Scope:
+- Stakeholders:
+
+Hypothesis
+- Working theory:
+- Disproving data:
+
+Timeline
+- [HH:mm] Event:
+- [HH:mm] Action:
+
+Evidence
+- Artifacts:
+- Screenshots:
+- Links:
+
+Decisions
+- Decision:
+- Rationale:
+
+Next Actions [ACT]
+- Owner:
+- Due:
+
+Comms [COMM]
+- Audience:
+- Message:
+
+Blockers [WAIT]
+- Item:
+- Unblock plan:
+
+02-Incidents
+	•	Page: YYYY-MM-DD - <caseID> - RCA
+
+What happened
+Impact
+Root cause
+Contributing factors
+Controls
+Lessons
+Follow ups [ACT]
+
+03-Detections
+	•	Page: Use case - <name> - notes
+
+Intent
+Data sources
+Logic summary
+Tuning history [TUNE]
+Known gaps [GAP]
+References
+
+	•	Page: Noise log - <rule name>
+
+Date
+Pattern observed
+Suppression or change
+Owner
+
+	•	Page: Suppression - rationale
+
+Suppression scope
+Justification
+Safeguards
+Review date
+
+04-Queries
+	•	Page: 00-Common hunts
+
+One line per hunt. Keep five only.
+- <purpose> [QUERY]
+  - Where to run:
+  - Expected signal:
+
+	•	Subpage under each tool, template named <tool> - template - QUERY
+
+Goal
+Query [QUERY]
+Expected output
+Field notes
+Gotchas
+Links
+
+05-Playbooks
+	•	Page: 00-First 10 minutes
+
+[CHK] Confirm scope
+[CHK] Validate signal in SIEM
+[CHK] Grab endpoint view
+[CHK] Ticket link and case owner
+[CHK] Send initial notice [COMM]
+Links
+- SIEM:
+- EDR:
+- Email template:
+
+	•	Page: Phish triage - SOP
+	•	Page: High visibility comms - TEMPLATE
+	•	Page: Escalation matrix - CONTACTS
+	•	Page: Links
+
+06-Training
+	•	Page: Training - team - agenda YYYY-MM
+
+Audience
+Objectives
+Outline
+Labs or demos
+Follow ups [ACT]
+
+	•	Page: Training - self - plan Qx
+
+Focus areas
+Resources
+Schedule
+Checkpoint dates
+
+	•	Page: Labs and exams - notes
+
+07-Intel
+	•	Page: Actor - <name>
+
+Summary
+Motivation
+Region
+TTPs [TTP]
+IOCs [IOC]
+Hunting notes
+Sources
+
+	•	Page: TTP - <ATT&CK technique>
+
+Technique summary
+Detections
+Data sources
+False positive patterns
+References
+
+	•	Page: Watchlist - domains
+	•	Page: Watchlist - hashes
+
+08-Reference
+	•	Page: Env map
+	•	Page: Key contacts
+	•	Page: Shift checklist
+	•	Page: URLs index
+
+99-Archive
+	•	Page: YYYY-MM - Monthly sweep
+
+Items moved from Inbox, Detections, Queries
+Notes worth promoting to Reference
+Follow ups [ACT]
+
+
+⸻
+
+Use during high stress
+	•	Work only inside 01-Active during an incident. Do not spawn new pages.
+	•	Dump anything transient into 00-Inbox. Do not sort in the moment.
+	•	For queries, keep 04-Queries > 00-Common hunts to five entries. If a sixth is required, demote one.
+
+Light maintenance cadence
+	•	End of shift: move finished notes from 01-Active to 02-Incidents or 99-Archive.
+	•	Weekly: prune 04-Queries, mark a single canonical per need as [REF].
+	•	Monthly: sweep 00-Inbox and 03-Detections noise logs, update 99-Archive page.
