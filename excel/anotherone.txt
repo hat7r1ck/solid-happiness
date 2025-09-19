@@ -1,20 +1,17 @@
 Option Explicit
 
 '=================================================================================================
-' PART 1: FIRST AID TOOL
-' This goes into a standard module (Module1).
+' PART 1: UTILITY & MAIN GENERATOR
+' This code goes into a standard module (e.g., Module1).
 '=================================================================================================
+
+' First Aid Tool: Run this if the Input sheet ever stops responding.
 Sub Force_Enable_Events()
     Application.EnableEvents = True
     MsgBox "Events have been re-enabled.", vbInformation
 End Sub
 
-
-'=================================================================================================
-' PART 2: MAIN EMAIL GENERATOR
-' This is the engine for the "Generate Email" button.
-' This goes into a standard module (Module1).
-'=================================================================================================
+' Main Engine: This is for the "Generate Email" button.
 Sub GenerateEmail_Final()
     ' --- CONFIGURATION ---
     Const INPUT_SHEET As String = "Input"
@@ -52,7 +49,7 @@ Sub GenerateEmail_Final()
     htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value
     If Trim(htmlBody) = "" Then MsgBox "The HTMLBody for template '" & selectedTemplate & "' is empty.", vbCritical: Exit Sub
 
-    ' --- 3. CREATE OUTLOOK ITEM (UNBREAKABLE CONNECTION) ---
+    ' --- 3. CREATE OUTLOOK ITEM ---
     On Error Resume Next
     Set olApp = GetObject(, "Outlook.Application")
     If Err.Number <> 0 Then
@@ -60,11 +57,7 @@ Sub GenerateEmail_Final()
         Set olApp = CreateObject("Outlook.Application")
     End If
     On Error GoTo ErrorHandler
-    
-    If olApp Is Nothing Then
-        MsgBox "Outlook is not running or could not be started. Please ensure Outlook is open and try again.", vbCritical
-        Exit Sub
-    End If
+    If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
     Set olMail = olApp.CreateItem(0)
 
     ' --- 4. PRE-LOAD BODY & RECIPIENTS ---
@@ -140,8 +133,8 @@ End Sub
 
 
 '=================================================================================================
-' PART 3: THE "IMPORT EMAIL" CAPTURE TOOL
-' This code goes into a new, clean module (Module2).
+' PART 2: THE "IMPORT EMAIL" CAPTURE TOOL
+' This code goes into a SEPARATE standard module (e.g., Module2).
 '=================================================================================================
 Sub Capture_Email_Template()
     ' --- CONFIGURATION ---
@@ -163,7 +156,7 @@ Sub Capture_Email_Template()
         If .Show = -1 Then msgFilePath = .SelectedItems(1) Else Exit Sub
     End With
 
-    ' --- 2. OPEN THE .MSG FILE (UNBREAKABLE CONNECTION) ---
+    ' --- 2. OPEN THE .MSG FILE ---
     On Error Resume Next
     Set olApp = GetObject(, "Outlook.Application")
     If Err.Number <> 0 Then
@@ -171,11 +164,7 @@ Sub Capture_Email_Template()
         Set olApp = CreateObject("Outlook.Application")
     End If
     On Error GoTo ErrorHandler
-    
-    If olApp Is Nothing Then
-        MsgBox "Outlook is not running or could not be started. Please ensure Outlook is open and try again.", vbCritical
-        Exit Sub
-    End If
+    If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
     
     Set olMail = olApp.Session.OpenSharedItem(msgFilePath)
     If olMail Is Nothing Then MsgBox "Could not open the selected .msg file.", vbCritical: Exit Sub
@@ -237,10 +226,9 @@ Sub Capture_Email_Template()
     
     With CreateObject("VBScript.RegExp")
         .Global = True
-        .Pattern = "\{\{([^\}]+?)\}\}" ' Step 1: Broadly capture everything
+        .Pattern = "\{\{([^\}]+?)\}\}"
         
         For Each match In .Execute(olMail.HTMLBody)
-            ' Step 2: Clean the captured text of any HTML junk
             Dim rawContent As String, cleanContent As String, finalPlaceholder As String
             rawContent = match.SubMatches(0)
             cleanContent = StripHTMLTags(rawContent)
@@ -265,7 +253,6 @@ ErrorHandler:
     MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
 End Sub
 
-' Helper function to remove HTML tags from a string
 Private Function StripHTMLTags(htmlText As String) As String
     With CreateObject("VBScript.RegExp")
         .Global = True
@@ -274,12 +261,17 @@ Private Function StripHTMLTags(htmlText As String) As String
     End With
 End Function
 
+
 '=================================================================================================
-' PART 4: INPUT SHEET EVENT HANDLER
+' PART 3: INPUT SHEET EVENT HANDLER
 ' This code goes into the "Input" sheet's code window.
 '=================================================================================================
 Private Sub Worksheet_Change(ByVal Target As Range)
+    ' This is the safe, non-destructive version that does not touch formatting.
+
     If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
+    
+    Const PLACEHOLDER_HEADER_ROW As Long = 5
     
     On Error GoTo CleanExit
     Application.EnableEvents = False
@@ -287,90 +279,33 @@ Private Sub Worksheet_Change(ByVal Target As Range)
     Dim selectedTemplate As String
     selectedTemplate = Me.Range("B2").Value
     
-    Dim inputTable As ListObject
-    Set inputTable = Me.ListObjects("InputTable")
+    ' Clear ONLY the contents of the old data, below the headers.
+    Dim lastDataRow As Long
+    lastDataRow = Me.Cells(Me.Rows.Count, "A").End(xlUp).Row
     
-    If inputTable.ListRows.Count > 0 Then
-        inputTable.DataBodyRange.Delete
+    If lastDataRow > PLACEHOLDER_HEADER_ROW Then
+        Me.Range("A" & (PLACEHOLDER_HEADER_ROW + 1) & ":B" & lastDataRow).ClearContents
     End If
     
     If selectedTemplate = "" Then GoTo CleanExit
     
-    Dim wsFields As Worksheet, fieldsTable As ListObject, fieldRow As ListRow
-    Set wsFields = ThisWorkbook.Sheets("TemplateFields")
-    Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
-    
-    For Each fieldRow In fieldsTable.ListRows
-        If fieldRow.Range(1).Value = selectedTemplate Then
-            inputTable.ListRows.Add.Range(1).Value = fieldRow.Range(2).Value
-        End If
-    Next fieldRow
-
-CleanExit:
-    Application.EnableEvents = True
-End Sub
-
-
-
-
-
------------
-
-Private Sub Worksheet_Change(ByVal Target As Range)
-    ' FINAL, NON-DESTRUCTIVE VERSION
-    ' This code is safe and will not clear cells outside the placeholder area.
-
-    ' Only run if the template dropdown in cell B2 is changed.
-    If Intersect(Target, Me.Range("B2")) Is Nothing Then Exit Sub
-    
-    ' --- CONFIGURATION ---
-    Const PLACEHOLDER_START_ROW As Long = 5
-    Const PLACEHOLDER_COL As String = "A"
-    
-    On Error GoTo CleanExit
-    Application.EnableEvents = False ' Prevent this from running again while it works
-    
-    Dim selectedTemplate As String
-    selectedTemplate = Me.Range("B2").Value
-    
-    ' --- 1. SAFE CLEARING LOGIC ---
-    ' This finds the LAST row of the OLD placeholder list in columns A and B
-    ' and clears ONLY that specific area. It will not touch anything below it.
-    Dim lastRowA As Long, lastRowB As Long, lastRowToClear As Long
-    lastRowA = Me.Cells(Me.Rows.Count, "A").End(xlUp).Row
-    lastRowB = Me.Cells(Me.Rows.Count, "B").End(xlUp).Row
-    lastRowToClear = Application.WorksheetFunction.Max(lastRowA, lastRowB)
-    
-    ' Only clear if there's actually data in the placeholder area.
-    If lastRowToClear >= PLACEHOLDER_START_ROW Then
-        Me.Range("A" & PLACEHOLDER_START_ROW & ":B" & lastRowToClear).ClearContents
-    End If
-    
-    ' Set the headers for the placeholder list.
-    Me.Cells(PLACEHOLDER_START_ROW, "A").Value = "Placeholder"
-    Me.Cells(PLACEHOLDER_START_ROW, "B").Value = "Value"
-    
-    If selectedTemplate = "" Then GoTo CleanExit ' Exit if no template is selected
-    
-    ' --- 2. POPULATE THE NEW LIST ---
+    ' Populate the new list.
     Dim wsFields As Worksheet, fieldsTable As ListObject, fieldRow As ListRow
     Dim writeRow As Long
     
     Set wsFields = ThisWorkbook.Sheets("TemplateFields")
     Set fieldsTable = wsFields.ListObjects("TemplateFieldsTable")
     
-    ' Start writing on the row below the headers.
-    writeRow = PLACEHOLDER_START_ROW + 1
+    writeRow = PLACEHOLDER_HEADER_ROW + 1
     
     For Each fieldRow In fieldsTable.ListRows
         If fieldRow.Range(1).Value = selectedTemplate Then
-            ' Write the placeholder name directly to the cell in column A.
-            Me.Cells(writeRow, PLACEHOLDER_COL).Value = fieldRow.Range(2).Value
-            writeRow = writeRow + 1 ' Move to the next row
+            Me.Cells(writeRow, "A").Value = fieldRow.Range(2).Value
+            writeRow = writeRow + 1
         End If
     Next fieldRow
 
 CleanExit:
-    Application.EnableEvents = True ' CRITICAL: Always re-enable events.
+    Application.EnableEvents = True
 End Sub
 
