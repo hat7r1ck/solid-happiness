@@ -1,0 +1,191 @@
+Got it. Treat OneNote as your fast operational notebook, and VS Code as your project workspace. Below is a compact reset that you can implement today without new tools.
+
+OneNote, capture and retrieval only
+
+Goal: quick capture, reliable search, zero formatting tricks.
+
+Sections to keep
+	•	00-Inbox
+	•	01-Active
+	•	04-Queries
+	•	05-Playbooks
+	•	08-Reference
+	•	99-Archive
+
+Page title patterns
+	•	Dump: YYYY-MM-DD HHmm - dump
+	•	Active case: YYYY-MM-DD - <keyword> - ACTIVE
+	•	Query: <tool> - <purpose> - QUERY
+	•	SOP: <process> - SOP
+	•	Reference: <topic> - REF
+
+Inline tags
+Use plain text so search works in OneNote: [ACT], [WAIT], [REF], [QUERY], [COMM].
+
+Fast-capture
+	•	Outlook to OneNote: use “Send to OneNote” and target 00-Inbox.
+	•	Screenshots: Win+Shift+S then paste into 00-Inbox. First line: SRC: <source>.
+	•	During incidents work only on the single 01-Active page. Append timestamps, do not spawn new pages.
+
+Daily and weekly
+	•	End of shift: move actionable items from 01-Active to either 05-Playbooks (SOP updates) or 08-Reference, or to 99-Archive. Keep 01-Active short.
+	•	Weekly 10 minutes: promote any stable snippets from 00-Inbox into 04-Queries or 05-Playbooks. Delete the remainder.
+
+If you want I can convert your current mess by generating a minimal set of page stubs that you can paste as plain text. No markdown required.
+
+⸻
+
+VS Code, projects only
+
+Goal: make navigation deterministic, reduce noise in search, keep notes adjacent to code without clutter.
+
+1) Create a clean multi root workspace
+
+Save a new workspace file at the top of your work folder, for example work.code-workspace:
+
+{
+  "folders": [
+    { "path": "projects" },
+    { "path": "scripts" },
+    { "path": "playbooks" },
+    { "path": "scratch" }
+  ],
+  "settings": {
+    // Hide junk everywhere
+    "files.exclude": {
+      "**/.git": true,
+      "**/.github": true,
+      "**/.DS_Store": true,
+      "**/node_modules": true,
+      "**/bin": true,
+      "**/obj": true,
+      "**/.venv": true,
+      "**/__pycache__": true
+    },
+    // Keep searches clean
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/bin": true,
+      "**/obj": true,
+      "**/.venv": true,
+      "**/__pycache__": true,
+      "**/dist": true,
+      "**/build": true
+    },
+    // Make TODO discovery reliable
+    "todo-tree.regex.regex": "((//|#|;|/\\*|^)\\s*)(TODO|FIXME|NOTE|ACT|WAIT)\\s*:?",
+    "todo-tree.general.tags": ["ACT", "WAIT", "TODO", "FIXME", "NOTE"],
+    "todo-tree.highlights.customHighlight": {
+      "ACT": { "icon": "flame" },
+      "WAIT": { "icon": "clock" }
+    },
+    // Keep markdown previews quiet
+    "markdown.preview.breaks": false
+  }
+}
+
+Open VS Code, File -> Open Workspace from File, select this .code-workspace.
+
+2) Minimal folder layout in the workspace
+
+Create only these four top folders under your workspace root. Nothing else at the top level.
+
+projects/
+scripts/
+playbooks/
+scratch/
+
+	•	projects: one folder per deliverable, for example projects/incident-comms-builder.
+	•	scripts: standalone utilities used across projects.
+	•	playbooks: operational docs that live better as code or templates, for example HTML email templates, JSON, CSV seeds.
+	•	scratch: throwaway notes, spikes, bench tests. Auto purged often.
+
+3) One scratchpad per day
+
+Keep a rolling plain text pad so you stop scattering notes.
+
+Create scratch/2025-09-rolling.txt and append throughout the day. Title every block with a timestamp.
+
+[07:42] Context: <one line>
+[07:43] Next [ACT]: <one line>
+
+When an item becomes real, move it into a proper project README or OneNote 01-Active.
+
+4) Canonical README in every project
+
+Add a short README to each projects/<name>/README.md. Keep it to five blocks.
+
+Purpose
+Scope
+Status
+Next [ACT]
+Links
+
+If you prefer txt over md, use .txt. The point is consistent anchors for search.
+
+5) Tasks you can run without remembering flags
+
+Add tasks.json per project if you run the same commands often.
+
+.vscode/tasks.json:
+
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "lint", "type": "shell", "command": "pwsh -NoLogo -NoProfile -Command ./scripts/lint.ps1", "problemMatcher": [] },
+    { "label": "test", "type": "shell", "command": "pwsh -NoLogo -NoProfile -Command ./scripts/test.ps1", "problemMatcher": [] }
+  ]
+}
+
+Run with Ctrl+Shift+B and pick the task.
+
+6) Snippets for boilerplate headers
+
+Create one workspace snippet file to stamp context headers into new files.
+
+File -> Preferences -> Configure User Snippets -> New Global Snippets file, then:
+
+{
+  "ContextHeader": {
+    "prefix": "ctx",
+    "body": [
+      "Context: $1",
+      "Owner: $2",
+      "Created: ${CURRENT_YEAR}-${CURRENT_MONTH}-${CURRENT_DATE} ${CURRENT_HOUR}:${CURRENT_MINUTE}",
+      "Next [ACT]: $3"
+    ],
+    "description": "Insert a short context header"
+  }
+}
+
+7) Keep search surgical
+	•	Use files to include with glob patterns, for example projects/**, when you search.
+	•	Use Find in folder on projects/<name> instead of the entire workspace.
+	•	Use your tags as search terms, for example ACT: or WAIT:.
+
+8) Minimal extensions that earn their keep
+	•	Todo Tree, shows ACT and WAIT in an outline.
+	•	Bookmarks, jump between code anchors without hunting.
+	•	Project Manager, quick switch between saved workspace entries.
+Skip the rest for now.
+
+⸻
+
+How the two systems meet
+	•	Anything transient or human facing goes to OneNote. Title it with the patterns above.
+	•	Anything that will become code, a script, a template, or a repeatable artifact goes into VS Code under projects, scripts, or playbooks.
+	•	Link from OneNote into files by path when it matters, for example projects\incident-comms-builder\README.md.
+
+⸻
+
+30 minute reset plan
+	1.	Create the work.code-workspace shown above. Open it.
+	2.	Create projects, scripts, playbooks, scratch.
+	3.	Create scratch/2025-09-rolling.txt and start using it today.
+	4.	In OneNote, keep only the six sections listed, and create a single 01-Active page for the current work.
+	5.	Spend 15 minutes moving only current items:
+	•	If it is an active incident, paste into 01-Active.
+	•	If it is a reusable query, add to 04-Queries.
+	•	If it is a SOP, move to 05-Playbooks.
+	•	Everything else stays put for now.
+	6.	Set a 10 minute block tomorrow to promote two items from 00-Inbox to their permanent homes. Repeat daily until the backlog is gone.
