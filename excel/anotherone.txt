@@ -334,3 +334,153 @@ Private Sub Worksheet_Change(ByVal Target As Range)
 CleanExit:
     Application.EnableEvents = True
 End Sub
+
+
+-----
+Sub GenerateEmail_Final()
+    ' --- CONFIGURATION ---
+    Const INPUT_SHEET As String = "Input"
+    Const TEMPLATE_SHEET As String = "Templates"
+    Const RECIPIENT_SHEET As String = "RecipientGroup"
+
+    ' --- DECLARATIONS ---
+    Dim olApp As Object, olMail As Object
+    Dim wsInput As Worksheet, wsTemplates As Worksheet, wsRecipients As Worksheet
+    Dim selectedTemplate As String, selectedGroup As String, recipientPlacement As String, recipientList As String, htmlBody As String, tempFolderPath As String
+    
+    On Error GoTo ErrorHandler
+
+    ' --- INITIALIZE ---
+    Set wsInput = ThisWorkbook.Sheets(INPUT_SHEET)
+    Set wsTemplates = ThisWorkbook.Sheets(TEMPLATE_SHEET)
+    Set wsRecipients = ThisWorkbook.Sheets(RECIPIENT_SHEET)
+
+    ' --- 1. GET SELECTIONS ---
+    selectedTemplate = wsInput.Range("B2").Value
+    
+    ' *** CRITICAL FIX: ONLY THE TEMPLATE IS REQUIRED ***
+    If selectedTemplate = "" Then
+        MsgBox "You must select a Template in cell B2.", vbCritical
+        Exit Sub
+    End If
+    
+    selectedGroup = wsInput.Range("B3").Value
+    recipientPlacement = wsInput.Range("C4").Value
+    
+    ' --- 2. LOAD TEMPLATE DATA ---
+    Dim templateRow As Range
+    Set templateRow = wsTemplates.Range("A:A").Find(selectedTemplate, LookIn:=xlValues, lookat:=xlWhole)
+    If templateRow Is Nothing Then MsgBox "Template '" & selectedTemplate & "' not found.", vbCritical: Exit Sub
+    
+    htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value
+    If Trim(htmlBody) = "" Then MsgBox "The HTMLBody for template '" & selectedTemplate & "' is empty.", vbCritical: Exit Sub
+
+    ' --- 3. CREATE OUTLOOK ITEM ---
+    On Error Resume Next
+    Set olApp = GetObject(, "Outlook.Application")
+    If Err.Number <> 0 Then
+        Err.Clear
+        Set olApp = CreateObject("Outlook.Application")
+    End If
+    On Error GoTo ErrorHandler
+    If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
+    Set olMail = olApp.CreateItem(0)
+
+    ' --- 4. PRE-LOAD BODY & OPTIONALLY ASSIGN RECIPIENTS ---
+    With olMail
+        .Subject = wsTemplates.Cells(templateRow.Row, "B").Value
+        .HTMLBody = htmlBody
+        
+        ' This section only runs if a recipient group IS selected.
+        If selectedGroup <> "" Then
+            Dim recipientRow As Range
+            Set recipientRow = wsRecipients.Range("A:A").Find(selectedGroup, LookIn:=xlValues, lookat:=xlWhole)
+            
+            If Not recipientRow Is Nothing Then
+                recipientList = wsRecipients.Cells(recipientRow.Row, "B").Value
+                recipientList = Replace(recipientList, ",", ";")
+                
+                ' Default to "TO" if placement is not specified
+                If recipientPlacement = "" Then recipientPlacement = "TO"
+                
+                Select Case UCase(recipientPlacement)
+                    Case "TO"
+                        .To = recipientList
+                    Case "CC"
+                        .CC = recipientList
+                    Case "BCC"
+                        .BCC = recipientList
+                End Select
+            Else
+                MsgBox "Recipient Group '" & selectedGroup & "' was not found. Continuing without recipients.", vbExclamation
+            End If
+        End If
+    End With
+    
+    ' --- 5. PROCESS & EMBED IMAGES ---
+    Dim fileSystem As Object
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    tempFolderPath = Environ("TEMP") & "\" & fileSystem.GetTempName
+    fileSystem.CreateFolder tempFolderPath
+
+    Dim imageCIDs As Variant, imageShapeNames As Variant, i As Long
+    imageCIDs = Split(wsTemplates.Cells(templateRow.Row, "D").Value, ",")
+    imageShapeNames = Split(wsTemplates.Cells(templateRow.Row, "E").Value, ",")
+
+    If UBound(imageCIDs) = UBound(imageShapeNames) Then
+        For i = 0 To UBound(imageCIDs)
+            Dim imageCID As String, imageShapeName As String
+            imageCID = Trim(imageCIDs(i))
+            imageShapeName = Trim(imageShapeNames(i))
+            
+            If imageCID <> "" And imageShapeName <> "" Then
+                Dim imageShape As Shape, chartObj As ChartObject, tempFilePath As String
+                On Error Resume Next
+                Set imageShape = wsTemplates.Shapes(imageShapeName)
+                If Err.Number = 0 Then
+                    tempFilePath = tempFolderPath & "\" & imageShapeName & ".png"
+                    imageShape.CopyPicture Appearance:=xlScreen, Format:=xlPicture
+                    Set chartObj = wsTemplates.ChartObjects.Add(0, 0, imageShape.Width, imageShape.Height)
+                    chartObj.Chart.Paste
+                    chartObj.Chart.Export Filename:=tempFilePath, Filtername: "PNG"
+                    chartObj.Delete
+                    olMail.Attachments.Add(tempFilePath).PropertyAccessor.SetProperty "http://schemas.microsoft.com/mapi/proptag/0x3712001F", imageCID
+                Else
+                    Debug.Print "Warning: Image shape '" & imageShapeName & "' not found on Templates sheet."
+                    Err.Clear
+                End If
+                On Error GoTo ErrorHandler
+            End If
+        Next i
+    End If
+
+    ' --- 6. REPLACE TEXT PLACEHOLDERS ---
+    Dim inputTable As ListObject
+    If wsInput.ListObjects.Count = 0 Then
+        MsgBox "FATAL ERROR: No table found on the 'Input' sheet for placeholders.", vbCritical
+        Exit Sub
+    End If
+    Set inputTable = wsInput.ListObjects(1)
+    
+    For i = 1 To inputTable.ListRows.Count
+        Dim placeholder As String, replacementValue As String
+        placeholder = inputTable.DataBodyRange(i, 1).Value
+        replacementValue = inputTable.DataBodyRange(i, 2).Value
+        olMail.HTMLBody = Replace(olMail.HTMLBody, placeholder, replacementValue, 1, -1, vbTextCompare)
+    Next i
+
+    ' --- 7. DISPLAY FINAL EMAIL ---
+    olMail.Display
+    
+Cleanup:
+    On Error Resume Next
+    If Not fileSystem Is Nothing And tempFolderPath <> "" Then
+        If fileSystem.FolderExists(tempFolderPath) Then fileSystem.DeleteFolder tempFolderPath, True
+    End If
+    Set olMail = Nothing: Set olApp = Nothing: Set fileSystem = Nothing
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "A critical error occurred:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
+    GoTo Cleanup
+End Sub
