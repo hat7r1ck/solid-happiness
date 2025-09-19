@@ -58,6 +58,8 @@ Sub Capture_Email_Template()
 
     ' --- 6. CAPTURE & STORE EMBEDDED IMAGES ---
     Dim att As Object, allCIDs As String, allShapeNames As String
+    Dim fileSystem As Object, tempFile As Object
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
     allCIDs = ""
     allShapeNames = ""
 
@@ -71,16 +73,24 @@ Sub Capture_Email_Template()
             tempFilePath = Environ("TEMP") & "\" & att.FileName
             att.SaveAsFile tempFilePath
             
-            Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
-            ' Sanitize filename for the shape name
-            newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
-            imageShape.Name = newShapeName
-            
-            If allCIDs <> "" Then allCIDs = allCIDs & ", "
-            allCIDs = allCIDs & cid
-            
-            If allShapeNames <> "" Then allShapeNames = allShapeNames & ", "
-            allShapeNames = allShapeNames & newShapeName
+            ' *** CRITICAL FIX: VALIDATE THE IMAGE FILE BEFORE ADDING IT ***
+            Set tempFile = fileSystem.GetFile(tempFilePath)
+            If tempFile.Size > 0 Then ' Check if the file is not empty
+                Dim ext As String
+                ext = LCase(fileSystem.GetExtensionName(tempFilePath))
+                If ext = "jpg" Or ext = "jpeg" Or ext = "png" Or ext = "gif" Or ext = "bmp" Then
+                    ' This is a REAL image, so add it
+                    Set imageShape = wsTemplates.Shapes.AddPicture(tempFilePath, msoFalse, msoTrue, 10, 10, -1, -1)
+                    newShapeName = newTemplateName & "_" & Replace(att.FileName, " ", "_")
+                    imageShape.Name = newShapeName
+                    
+                    If allCIDs <> "" Then allCIDs = allCIDs & ", "
+                    allCIDs = allCIDs & cid
+                    
+                    If allShapeNames <> "" Then allShapeNames = allShapeNames & ", "
+                    allShapeNames = allShapeNames & newShapeName
+                End If
+            End If
             
             Kill tempFilePath
         End If
@@ -118,3 +128,4 @@ ErrorHandler:
     If Not olMail Is Nothing Then olMail.Close 1 ' olDiscard
     MsgBox "Capture Error:" & vbCrLf & "Error #" & Err.Number & " - " & Err.Description, vbCritical
 End Sub
+
