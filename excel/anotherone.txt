@@ -2,7 +2,7 @@ Option Explicit
 
 '=================================================================================================
 ' PART 1: UTILITY & MAIN GENERATOR
-' This code goes into a new, clean module (e.g., Module1).
+' This code goes into a standard module (e.g., Module1).
 '=================================================================================================
 
 ' First Aid Tool: Run this if the Input sheet ever stops responding.
@@ -17,12 +17,11 @@ Sub GenerateEmail_Final()
     Const INPUT_SHEET As String = "Input"
     Const TEMPLATE_SHEET As String = "Templates"
     Const RECIPIENT_SHEET As String = "RecipientGroup"
-    Const PLACEHOLDER_START_ROW As Long = 6 ' Data starts at row 6, below headers at row 5
 
     ' --- DECLARATIONS ---
     Dim olApp As Object, olMail As Object
     Dim wsInput As Worksheet, wsTemplates As Worksheet, wsRecipients As Worksheet
-    Dim selectedTemplate As String, selectedGroup As String, htmlBody As String, tempFolderPath As String
+    Dim selectedTemplate As String, selectedGroup As String, recipientPlacement As String, recipientList As String, htmlBody As String, tempFolderPath As String
     
     On Error GoTo ErrorHandler
 
@@ -34,8 +33,10 @@ Sub GenerateEmail_Final()
     ' --- 1. GET SELECTIONS ---
     selectedTemplate = wsInput.Range("B2").Value
     selectedGroup = wsInput.Range("B3").Value
-    If selectedTemplate = "" Or selectedGroup = "" Then
-        MsgBox "Template (B2) and Recipient Group (B3) must be selected.", vbExclamation
+    recipientPlacement = wsInput.Range("C4").Value
+    
+    If selectedTemplate = "" Or selectedGroup = "" Or recipientPlacement = "" Then
+        MsgBox "Template (B2), Recipient Group (B3), and Placement (C4) must be selected.", vbExclamation
         Exit Sub
     End If
     
@@ -48,6 +49,9 @@ Sub GenerateEmail_Final()
     If recipientRow Is Nothing Then MsgBox "Recipient Group '" & selectedGroup & "' not found.", vbCritical: Exit Sub
     
     htmlBody = wsTemplates.Cells(templateRow.Row, "C").Value
+    recipientList = wsRecipients.Cells(recipientRow.Row, "B").Value
+    recipientList = Replace(recipientList, ",", ";") ' Handle comma-separated lists
+    
     If Trim(htmlBody) = "" Then MsgBox "The HTMLBody for template '" & selectedTemplate & "' is empty.", vbCritical: Exit Sub
 
     ' --- 3. CREATE OUTLOOK ITEM ---
@@ -61,10 +65,17 @@ Sub GenerateEmail_Final()
     If olApp Is Nothing Then MsgBox "Could not start or connect to Outlook.", vbCritical: Exit Sub
     Set olMail = olApp.CreateItem(0)
 
-    ' --- 4. PRE-LOAD BODY & RECIPIENTS ---
+    ' --- 4. PRE-LOAD BODY & ASSIGN RECIPIENTS ---
     With olMail
-        .To = wsRecipients.Cells(recipientRow.Row, "B").Value
-        .CC = wsRecipients.Cells(recipientRow.Row, "C").Value
+        Select Case UCase(recipientPlacement)
+            Case "TO"
+                .To = recipientList
+            Case "CC"
+                .CC = recipientList
+            Case "BCC"
+                .BCC = recipientList
+        End Select
+        
         .Subject = wsTemplates.Cells(templateRow.Row, "B").Value
         .HTMLBody = htmlBody
     End With
@@ -106,18 +117,20 @@ Sub GenerateEmail_Final()
         Next i
     End If
 
-    ' --- 6. REPLACE TEXT PLACEHOLDERS (BRUTE-FORCE METHOD) ---
-    ' This method does NOT use a table object. It reads directly from the cells.
-    Dim currentRow As Long
-    currentRow = PLACEHOLDER_START_ROW
+    ' --- 6. REPLACE TEXT PLACEHOLDERS ---
+    Dim inputTable As ListObject
+    If wsInput.ListObjects.Count = 0 Then
+        MsgBox "FATAL ERROR: No table found on the 'Input' sheet for placeholders.", vbCritical
+        Exit Sub
+    End If
+    Set inputTable = wsInput.ListObjects(1) ' Find the first table, regardless of name.
     
-    Do While wsInput.Cells(currentRow, "A").Value <> ""
+    For i = 1 To inputTable.ListRows.Count
         Dim placeholder As String, replacementValue As String
-        placeholder = wsInput.Cells(currentRow, "A").Value
-        replacementValue = wsInput.Cells(currentRow, "B").Value
+        placeholder = inputTable.DataBodyRange(i, 1).Value
+        replacementValue = inputTable.DataBodyRange(i, 2).Value
         olMail.HTMLBody = Replace(olMail.HTMLBody, placeholder, replacementValue, 1, -1, vbTextCompare)
-        currentRow = currentRow + 1
-    Loop
+    Next i
 
     ' --- 7. DISPLAY FINAL EMAIL ---
     olMail.Display
@@ -321,4 +334,3 @@ Private Sub Worksheet_Change(ByVal Target As Range)
 CleanExit:
     Application.EnableEvents = True
 End Sub
-
