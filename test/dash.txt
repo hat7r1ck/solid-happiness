@@ -10,13 +10,25 @@
       },
       "title": "Entity (host, user, IP)"
     },
-    "input_timerange": {
+    "input_global_trp": {
       "type": "input.timerange",
       "options": {
-        "token": "tok_timerange",
-        "defaultValue": "-24h@h,now"
+        "defaultValue": "-24h@h,now",
+        "token": "global_time"
       },
-      "title": "Time Range"
+      "title": "Global Time Range"
+    }
+  },
+  "defaults": {
+    "dataSources": {
+      "ds.search": {
+        "options": {
+          "queryParameters": {
+            "earliest": "$global_time.earliest$",
+            "latest": "$global_time.latest$"
+          }
+        }
+      }
     }
   },
   "visualizations": {
@@ -68,111 +80,96 @@
     "ds_main_search": {
       "type": "ds.search",
       "options": {
-        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rex field=_norm \"^[^-]+-\\s*(?<rule_name_alt>.*?)\\s*-[^-]+$\" | eval rule_name = trim(coalesce(rule_name, rule_name_alt, _norm)) | rename rule_name as \"Rule Name\", annotations.mitre_attack.mitre_tactic_id as \"MITRE Tactic ID\", annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\", annotations.mitre_attack.mitre_technique as \"MITRE Technique\", annotations.mitre_attack.mitre_technique_id as \"MITRE Technique ID\", calculated_risk_score as \"Risk Score\", annotations.wf_data_source as \"Data Source\" | table \"Rule Name\", \"MITRE Tactic ID\", \"MITRE Tactic\", \"MITRE Technique\", \"MITRE Technique ID\", \"Risk Score\", \"Data Source\", _time | sort -_time",
-        "queryParameters": {
-          "earliest": "$tok_timerange.earliest$",
-          "latest": "$tok_timerange.latest$"
-        }
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rex field=_norm \"^[^-]+-\\s*(?<rule_name_alt>.*?)\\s*-[^-]+$\" | eval rule_name = trim(coalesce(rule_name, rule_name_alt, _norm)) | rename rule_name as \"Rule Name\", annotations.mitre_attack.mitre_tactic_id as \"MITRE Tactic ID\", annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\", annotations.mitre_attack.mitre_technique as \"MITRE Technique\", annotations.mitre_attack.mitre_technique_id as \"MITRE Technique ID\", calculated_risk_score as \"Risk Score\", annotations.wf_data_source as \"Data Source\" | table \"Rule Name\", \"MITRE Tactic ID\", \"MITRE Tactic\", \"MITRE Technique\", \"MITRE Technique ID\", \"Risk Score\", \"Data Source\", _time | sort -_time"
       },
       "name": "Main MITRE Search"
     },
     "ds_lookup_files": {
       "type": "ds.search",
       "options": {
-        "query": "| rest /services/data/lookup-table-files | table title, author, updated | rename title as \"Lookup File\", author as \"Modified By\", updated as \"Last Updated\" | sort -\"Last Updated\"",
-        "queryParameters": {
-          "earliest": "-1d@d",
-          "latest": "now"
-        }
+        "query": "| rest /services/data/lookup-table-files | table title, author, updated | rename title as \"Lookup File\", author as \"Modified By\", updated as \"Last Updated\" | sort -\"Last Updated\""
       },
       "name": "Lookup Files"
     },
     "ds_timeline": {
       "type": "ds.search",
       "options": {
-        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | rename calculated_risk_score as \"Risk Score\" | bin _time span=1h | stats avg(\"Risk Score\") as avg_risk by _time | sort _time",
-        "queryParameters": {
-          "earliest": "$tok_timerange.earliest$",
-          "latest": "$tok_timerange.latest$"
-        }
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | rename calculated_risk_score as \"Risk Score\" | bin _time span=1h | stats avg(\"Risk Score\") as avg_risk by _time | sort _time"
       },
       "name": "Risk Timeline"
     },
     "ds_raw_events": {
       "type": "ds.search",
       "options": {
-        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | head 50 | sort -_time",
-        "queryParameters": {
-          "earliest": "$tok_timerange.earliest$",
-          "latest": "$tok_timerange.latest$"
-        }
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | head 50 | sort -_time"
       },
       "name": "Raw Events"
     }
   },
-  "defaults": {
-    "dataSources": {
-      "ds.search": {
-        "options": {
-          "queryParameters": {
-            "earliest": "$tok_timerange.earliest$",
-            "latest": "$tok_timerange.latest$"
-          }
-        }
-      }
-    }
-  },
   "layout": {
-    "type": "grid",
-    "options": {
-      "width": 1440,
-      "height": 960
-    },
     "globalInputs": [
       "input_entity",
-      "input_timerange"
+      "input_global_trp"
     ],
-    "structure": [
-      {
-        "item": "viz_mitre_rules",
-        "type": "block",
-        "position": {
-          "x": 0,
-          "y": 0,
-          "w": 8,
-          "h": 6
-        }
-      },
-      {
-        "item": "viz_lookup_files",
-        "type": "block",
-        "position": {
-          "x": 8,
-          "y": 0,
-          "w": 4,
-          "h": 3
-        }
-      },
-      {
-        "item": "viz_risk_timeline",
-        "type": "block",
-        "position": {
-          "x": 8,
-          "y": 3,
-          "w": 4,
-          "h": 3
-        }
-      },
-      {
-        "item": "viz_raw_events",
-        "type": "block",
-        "position": {
-          "x": 0,
-          "y": 6,
-          "w": 12,
-          "h": 4
-        }
+    "layoutDefinitions": {
+      "layout_1": {
+        "options": {
+          "height": 960,
+          "width": 1440
+        },
+        "structure": [
+          {
+            "item": "viz_mitre_rules",
+            "type": "block",
+            "position": {
+              "x": 0,
+              "y": 0,
+              "w": 8,
+              "h": 6
+            }
+          },
+          {
+            "item": "viz_lookup_files",
+            "type": "block",
+            "position": {
+              "x": 8,
+              "y": 0,
+              "w": 4,
+              "h": 3
+            }
+          },
+          {
+            "item": "viz_risk_timeline",
+            "type": "block",
+            "position": {
+              "x": 8,
+              "y": 3,
+              "w": 4,
+              "h": 3
+            }
+          },
+          {
+            "item": "viz_raw_events",
+            "type": "block",
+            "position": {
+              "x": 0,
+              "y": 6,
+              "w": 12,
+              "h": 4
+            }
+          }
+        ],
+        "type": "grid"
       }
-    ]
+    },
+    "options": {},
+    "tabs": {
+      "items": [
+        {
+          "label": "Main Dashboard",
+          "layoutId": "layout_1"
+        }
+      ]
+    }
   }
 }
