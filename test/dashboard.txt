@@ -36,7 +36,7 @@
         "drilldown": "row"
       },
       "search": {
-        "query": "| rest /services/data/lookup-table-files | eval is_exclusion=if(like(title,\"%Exclusion%\") OR like(title,\"%exclusion%\") OR like(title,\"%Useragent%\"), 1, 0) | search is_exclusion=1 | eval file_size_mb=round(file_size/1024/1024, 2) | table title, author, updated, file_size_mb | rename title as \"Lookup File\", author as \"Modified By\", updated as \"Last Updated\", file_size_mb as \"Size (MB)\" | sort -\"Last Updated\"",
+        "query": "| rest /services/data/lookup-table-files | search title=*Exclusion* OR title=*exclusion* OR title=*Useragent* | eval file_size_mb=round(file_size/1024/1024, 2) | table title, author, updated, file_size_mb | rename title as \"Lookup File\", author as \"Modified By\", updated as \"Last Updated\", file_size_mb as \"Size (MB)\" | sort -\"Last Updated\"",
         "earliest_time": "-1d",
         "latest_time": "now"
       }
@@ -85,20 +85,20 @@
   "inputs": {
     "input_entity": {
       "type": "text",
+      "title": "Entity (host, user, IP)",
+      "defaultValue": "",
       "options": {
-        "token": "tok_entity",
-        "defaultValue": ""
-      },
-      "title": "Entity (host, user, IP)"
+        "token": "tok_entity"
+      }
     },
     "input_mitre_tactic": {
       "type": "dropdown",
+      "title": "MITRE Tactic Filter (optional)",
+      "defaultValue": "",
       "options": {
         "token": "tok_mitre_tactic",
-        "defaultValue": "",
         "allowCustomValues": false
       },
-      "title": "MITRE Tactic Filter (optional)",
       "dataSources": {
         "primary": {
           "type": "ds.search",
@@ -112,14 +112,14 @@
     },
     "input_timerange": {
       "type": "time",
-      "options": {
-        "token": "tok_timerange",
-        "defaultValue": {
-          "earliest_time": "-24h",
-          "latest_time": "now"
-        }
+      "title": "Time Range",
+      "defaultValue": {
+        "earliest_time": "-24h",
+        "latest_time": "now"
       },
-      "title": "Time Range"
+      "options": {
+        "token": "tok_timerange"
+      }
     }
   },
   "layout": {
