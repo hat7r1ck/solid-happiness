@@ -1,0 +1,295 @@
+{
+  "title": "MITRE Investigation Workspace",
+  "description": "Production-ready SOC dashboard for MITRE-mapped rules, entity investigations, and exclusion list analysis",
+  "inputs": {
+    "input_entity": {
+      "type": "input.text",
+      "options": {
+        "token": "tok_entity",
+        "defaultValue": ""
+      },
+      "title": "Entity (host, user, IP)"
+    },
+    "input_mitre_tactic": {
+      "type": "input.dropdown",
+      "options": {
+        "token": "tok_mitre_tactic",
+        "defaultValue": "",
+        "allowCustomValues": false
+      },
+      "title": "MITRE Tactic Filter (optional)",
+      "dataSources": {
+        "primary": "ds_mitre_tactics"
+      }
+    },
+    "input_timerange": {
+      "type": "input.timerange",
+      "options": {
+        "token": "tok_timerange",
+        "defaultValue": "-24h@h,now"
+      },
+      "title": "Time Range"
+    }
+  },
+  "visualizations": {
+    "viz_mitre_rules": {
+      "type": "splunk.table",
+      "title": "MITRE-Mapped Rules and Alerts for Entity",
+      "options": {
+        "wrap": true,
+        "showRowNumbers": true,
+        "drilldown": "row"
+      },
+      "dataSources": {
+        "primary": "ds_main_search"
+      }
+    },
+    "viz_mitre_breakdown": {
+      "type": "splunk.pie",
+      "title": "MITRE Tactic Distribution",
+      "options": {
+        "showPercent": true,
+        "showLegend": true
+      },
+      "dataSources": {
+        "primary": "ds_pie_chart"
+      }
+    },
+    "viz_exclusion_files": {
+      "type": "splunk.table",
+      "title": "Available Exclusion Lists",
+      "options": {
+        "wrap": false,
+        "showRowNumbers": false,
+        "drilldown": "row"
+      },
+      "dataSources": {
+        "primary": "ds_exclusion_files"
+      }
+    },
+    "viz_risk_timeline": {
+      "type": "splunk.line",
+      "title": "Risk Score Timeline for Entity",
+      "options": {
+        "showMarkers": true,
+        "showLegend": true
+      },
+      "dataSources": {
+        "primary": "ds_timeline"
+      }
+    },
+    "viz_top_entities": {
+      "type": "splunk.table", 
+      "title": "Top Risk Entities (Context)",
+      "options": {
+        "wrap": false,
+        "showRowNumbers": true,
+        "drilldown": "row"
+      },
+      "dataSources": {
+        "primary": "ds_top_entities"
+      }
+    },
+    "viz_raw_events": {
+      "type": "splunk.events",
+      "title": "Raw Contributing Events",
+      "options": {
+        "wrap": true,
+        "maxLines": 10
+      },
+      "dataSources": {
+        "primary": "ds_raw_events"
+      }
+    }
+  },
+  "dataSources": {
+    "ds_main_search": {
+      "type": "ds.search",
+      "options": {
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rex field=_norm \"^[^-]+-\\s*(?<rule_name_alt>.*?)\\s*-[^-]+$\" | eval rule_name = trim(coalesce(rule_name, rule_name_alt, _norm)) | rename rule_name as \"Rule Name\", annotations.mitre_attack.mitre_tactic_id as \"MITRE Tactic ID\", annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\", annotations.mitre_attack.mitre_technique as \"MITRE Technique\", annotations.mitre_attack.mitre_technique_id as \"MITRE Technique ID\", calculated_risk_score as \"Risk Score\", annotations.wf_data_source as \"Data Source\" | search \"MITRE Tactic\"=\"$tok_mitre_tactic$\" | table \"Rule Name\", \"MITRE Tactic ID\", \"MITRE Tactic\", \"MITRE Technique\", \"MITRE Technique ID\", \"Risk Score\", \"Data Source\", _time | sort -_time",
+        "queryParameters": {
+          "earliest": "$tok_timerange.earliest$",
+          "latest": "$tok_timerange.latest$"
+        }
+      },
+      "name": "Main MITRE Search"
+    },
+    "ds_mitre_tactics": {
+      "type": "ds.search",
+      "options": {
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rex field=_norm \"^[^-]+-\\s*(?<rule_name_alt>.*?)\\s*-[^-]+$\" | eval rule_name = trim(coalesce(rule_name, rule_name_alt, _norm)) | rename annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\" | stats count by \"MITRE Tactic\" | where isnotnull(\"MITRE Tactic\") | sort \"MITRE Tactic\"",
+        "queryParameters": {
+          "earliest": "-7d@d",
+          "latest": "now"
+        }
+      },
+      "name": "MITRE Tactics Dropdown"
+    },
+    "ds_pie_chart": {
+      "type": "ds.search",
+      "options": {
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rename annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\" | search \"MITRE Tactic\"=\"$tok_mitre_tactic$\" | where isnotnull(\"MITRE Tactic\") | stats count by \"MITRE Tactic\" | sort -count",
+        "queryParameters": {
+          "earliest": "$tok_timerange.earliest$",
+          "latest": "$tok_timerange.latest$"
+        }
+      },
+      "name": "MITRE Pie Chart"
+    },
+    "ds_exclusion_files": {
+      "type": "ds.search",
+      "options": {
+        "query": "| rest /services/data/lookup-table-files | search title=*Exclusion* OR title=*exclusion* OR title=*Useragent* | eval file_size_mb=round(file_size/1024/1024, 2) | table title, author, updated, file_size_mb | rename title as \"Lookup File\", author as \"Modified By\", updated as \"Last Updated\", file_size_mb as \"Size (MB)\" | sort -\"Last Updated\"",
+        "queryParameters": {
+          "earliest": "-1d@d",
+          "latest": "now"
+        }
+      },
+      "name": "Exclusion Files"
+    },
+    "ds_timeline": {
+      "type": "ds.search",
+      "options": {
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rename annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\", calculated_risk_score as \"Risk Score\" | search \"MITRE Tactic\"=\"$tok_mitre_tactic$\" | bin _time span=1h | stats avg(\"Risk Score\") as avg_risk, count as event_count by _time | eval avg_risk=round(avg_risk, 1) | sort _time",
+        "queryParameters": {
+          "earliest": "$tok_timerange.earliest$",
+          "latest": "$tok_timerange.latest$"
+        }
+      },
+      "name": "Risk Timeline"
+    },
+    "ds_top_entities": {
+      "type": "ds.search",
+      "options": {
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rename annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\", calculated_risk_score as \"Risk Score\" | search \"MITRE Tactic\"=\"$tok_mitre_tactic$\" | stats sum(\"Risk Score\") as total_risk, count as rule_count, values(\"MITRE Tactic\") as tactics by risk_object | eval total_risk=round(total_risk, 1) | sort -total_risk | head 20 | rename risk_object as \"Entity\", total_risk as \"Total Risk\", rule_count as \"Rule Count\", tactics as \"MITRE Tactics\"",
+        "queryParameters": {
+          "earliest": "$tok_timerange.earliest$",
+          "latest": "$tok_timerange.latest$"
+        }
+      },
+      "name": "Top Entities"
+    },
+    "ds_raw_events": {
+      "type": "ds.search",
+      "options": {
+        "query": "from datamodel:\"Risk\".\"All_Risk\" | search annotations=*ctcf* $tok_entity$ | eval _norm = replace(search_name, \"\\s*-\\s*\", \"-\") | eval _parts = split(_norm, \"-\") | eval rule_name = case(mvcount(_parts) > 3, mvjoin(mvindex(_parts, 1, mvcount(_parts) - 2), \"-\"), mvcount(_parts) == 2, mvindex(_parts, 1), true(), null()) | rename annotations.mitre_attack.mitre_tactic as \"MITRE Tactic\", calculated_risk_score as \"Risk Score\" | search \"MITRE Tactic\"=\"$tok_mitre_tactic$\" | head 50 | sort -_time",
+        "queryParameters": {
+          "earliest": "$tok_timerange.earliest$",
+          "latest": "$tok_timerange.latest$"
+        }
+      },
+      "name": "Raw Events"
+    }
+  },
+  "defaults": {
+    "dataSources": {
+      "ds.search": {
+        "options": {
+          "queryParameters": {
+            "earliest": "$tok_timerange.earliest$",
+            "latest": "$tok_timerange.latest$"
+          }
+        }
+      }
+    }
+  },
+  "layout": {
+    "type": "grid",
+    "options": {
+      "width": 1440,
+      "height": 960
+    },
+    "structure": [
+      {
+        "item": "input_entity",
+        "type": "input",
+        "position": {
+          "x": 0,
+          "y": 0,
+          "w": 4,
+          "h": 1
+        }
+      },
+      {
+        "item": "input_mitre_tactic", 
+        "type": "input",
+        "position": {
+          "x": 4,
+          "y": 0,
+          "w": 4,
+          "h": 1
+        }
+      },
+      {
+        "item": "input_timerange",
+        "type": "input", 
+        "position": {
+          "x": 8,
+          "y": 0,
+          "w": 4,
+          "h": 1
+        }
+      },
+      {
+        "item": "viz_mitre_rules",
+        "type": "block",
+        "position": {
+          "x": 0,
+          "y": 1,
+          "w": 8,
+          "h": 6
+        }
+      },
+      {
+        "item": "viz_mitre_breakdown",
+        "type": "block",
+        "position": {
+          "x": 8,
+          "y": 1,
+          "w": 4,
+          "h": 3
+        }
+      },
+      {
+        "item": "viz_risk_timeline",
+        "type": "block",
+        "position": {
+          "x": 8,
+          "y": 4,
+          "w": 4,
+          "h": 3
+        }
+      },
+      {
+        "item": "viz_exclusion_files",
+        "type": "block",
+        "position": {
+          "x": 0,
+          "y": 7,
+          "w": 6,
+          "h": 3
+        }
+      },
+      {
+        "item": "viz_top_entities", 
+        "type": "block",
+        "position": {
+          "x": 6,
+          "y": 7,
+          "w": 3,
+          "h": 3
+        }
+      },
+      {
+        "item": "viz_raw_events",
+        "type": "block",
+        "position": {
+          "x": 9,
+          "y": 7,
+          "w": 3,
+          "h": 3
+        }
+      }
+    ]
+  }
+}
