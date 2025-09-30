@@ -110,39 +110,35 @@
       "name": "Raw Events"
     }
   },
+  "defaults": {
+    "dataSources": {
+      "ds.search": {
+        "options": {
+          "queryParameters": {
+            "earliest": "$tok_timerange.earliest$",
+            "latest": "$tok_timerange.latest$"
+          }
+        }
+      }
+    }
+  },
   "layout": {
     "type": "grid",
     "options": {
       "width": 1440,
       "height": 960
     },
+    "globalInputs": [
+      "input_entity",
+      "input_timerange"
+    ],
     "structure": [
-      {
-        "item": "input_entity",
-        "type": "input",
-        "position": {
-          "x": 0,
-          "y": 0,
-          "w": 6,
-          "h": 1
-        }
-      },
-      {
-        "item": "input_timerange",
-        "type": "input", 
-        "position": {
-          "x": 6,
-          "y": 0,
-          "w": 6,
-          "h": 1
-        }
-      },
       {
         "item": "viz_mitre_rules",
         "type": "block",
         "position": {
           "x": 0,
-          "y": 1,
+          "y": 0,
           "w": 8,
           "h": 6
         }
@@ -152,7 +148,7 @@
         "type": "block",
         "position": {
           "x": 8,
-          "y": 1,
+          "y": 0,
           "w": 4,
           "h": 3
         }
@@ -162,7 +158,7 @@
         "type": "block",
         "position": {
           "x": 8,
-          "y": 4,
+          "y": 3,
           "w": 4,
           "h": 3
         }
@@ -172,9 +168,9 @@
         "type": "block",
         "position": {
           "x": 0,
-          "y": 7,
+          "y": 6,
           "w": 12,
-          "h": 3
+          "h": 4
         }
       }
     ]
