@@ -1,0 +1,48 @@
+// Run this script - it will auto-scroll and collect all names
+const participants = new Set();
+const participantList = document.querySelector('[role="menu"]') || document.querySelector('[data-tid="participants-list"]');
+
+if (!participantList) {
+    console.error('Could not find participant list container. Make sure the People panel is open.');
+} else {
+    console.log('Starting extraction. This will take ~30 seconds for 130 people...');
+    
+    let scrollPosition = 0;
+    const scrollStep = 100;
+    const scrollDelay = 300; // ms between scrolls
+    
+    function extractVisibleParticipants() {
+        document.querySelectorAll('li[role="menuitem"][data-track-module-name="startChatFromParticipants"]').forEach(item => {
+            const text = item.textContent.trim().split('\n')[0].trim();
+            if (text && text.length > 1) {
+                participants.add(text);
+            }
+        });
+        console.log(`Collected ${participants.size} unique participants so far...`);
+    }
+    
+    function scrollAndExtract() {
+        extractVisibleParticipants();
+        
+        scrollPosition += scrollStep;
+        participantList.scrollTop = scrollPosition;
+        
+        // Check if we've reached the bottom
+        if (participantList.scrollTop + participantList.clientHeight >= participantList.scrollHeight - 10) {
+            // Wait a bit then finish
+            setTimeout(() => {
+                extractVisibleParticipants();
+                const finalList = Array.from(participants).sort();
+                console.log('\n=== EXTRACTION COMPLETE ===');
+                console.table(finalList);
+                console.log(`\nTotal participants: ${finalList.length}`);
+                copy(finalList.join('\n'));
+                console.log('List copied to clipboard!');
+            }, 500);
+        } else {
+            setTimeout(scrollAndExtract, scrollDelay);
+        }
+    }
+    
+    scrollAndExtract();
+}
