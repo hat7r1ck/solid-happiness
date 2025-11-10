@@ -96,3 +96,59 @@ index=akami earliest=-14d@d latest=now
 | table attack_start_time, attack_end_time, attack_duration_min, total_events_fmt, avg_eps_fmt, severity, total_unique_ips, countries_display, targets_display, attack_summary
 | sort - attack_start_time
 | rename attack_start_time as "Attack Start", attack_end_time as "Attack End", attack_duration_min as "Duration (min)", total_events_fmt as "Total Events", avg_eps_fmt as "Avg EPS", severity as "Severity", total_unique_ips as "Unique IPs", countries_display as "Origin Countries", targets_display as "Targeted Hosts", attack_summary as "Attack Types"
+
+
+
+index=akami earliest=-14d@d latest=now
+| bucket _time span=10m
+| stats count as events
+    dc(attackData.clientIP) as unique_ips
+    values(geo.country) as countries
+    values(httpMessage.host) as targets
+    values(httpMessage.method) as methods
+    values(attackData.rules{}.message) as attack_types
+    by _time
+| sort 0 _time
+| streamstats current=f window=1 last(_time) as prev_time
+| eval time_gap=(_time - prev_time)
+| eval is_new_attack=if(time_gap > 1800 OR isnull(time_gap), 1, 0)
+| streamstats sum(is_new_attack) as attack_id
+| eventstats 
+    min(_time) as attack_start
+    max(_time) as attack_end
+    sum(events) as total_events
+    sum(unique_ips) as total_ips
+    values(countries) as all_countries
+    values(targets) as all_targets
+    values(methods) as all_methods
+    values(attack_types) as all_attack_types
+    by attack_id
+| where _time=attack_start
+| eval duration_min=round((attack_end - attack_start)/60, 0)
+| eval start_time=strftime(attack_start, "%Y-%m-%d %H:%M UTC")
+| eval end_time=strftime(attack_end, "%Y-%m-%d %H:%M UTC")
+| eval events_formatted=tostring(total_events, "commas")
+| eval ips_formatted=tostring(total_ips, "commas")
+| eval avg_eps=round(total_events / ((attack_end - attack_start) + 1), 0)
+| eval avg_eps_formatted=tostring(avg_eps, "commas")
+| eval severity=case(
+    avg_eps >= 1000000, "CRITICAL",
+    avg_eps >= 100000, "HIGH", 
+    avg_eps >= 10000, "MEDIUM",
+    1=1, "LOW")
+| eval country_list=if(mvcount(all_countries) > 8, mvjoin(mvindex(all_countries, 0, 7), ", ") + " (+" + tostring(mvcount(all_countries)-8) + " more)", mvjoin(all_countries, ", "))
+| eval target_list=if(mvcount(all_targets) > 2, mvjoin(mvindex(all_targets, 0, 1), ", ") + " (+" + tostring(mvcount(all_targets)-2) + " more)", mvjoin(all_targets, ", "))
+| eval attack_type_list=mvjoin(mvindex(all_attack_types, 0, 2), " | ")
+| table start_time, end_time, duration_min, events_formatted, avg_eps_formatted, severity, ips_formatted, country_list, target_list, attack_type_list
+| sort - start_time
+| rename 
+    start_time as "Attack Start" 
+    end_time as "Attack End" 
+    duration_min as "Duration (min)" 
+    events_formatted as "Total Events" 
+    avg_eps_formatted as "Avg EPS" 
+    severity as "Severity" 
+    ips_formatted as "Unique IPs" 
+    country_list as "Countries" 
+    target_list as "Targets" 
+    attack_type_list as "Attack Types"
