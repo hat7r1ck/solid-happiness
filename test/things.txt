@@ -409,3 +409,51 @@ index=akami earliest=-14d@d latest=now
     last_time as "Last Seen"
     duration_min as "Duration"
     target_summary as "Targets"
+
+
+index=akami earliest=-14d@d latest=now
+| rex field=httpMessage.requestHeaders "User-Agent:\s+(?<user_agent>[^\r\n]+)"
+| rex field=attackData.rules{}.message "(?<attack_type>^[^(|]+)"
+| eval attack_type=trim(attack_type)
+| stats 
+    count as total_requests
+    dc(attackData.clientIP) as unique_ips
+    dc(attack_type) as attack_types_count
+    values(attack_type) as attack_types
+    values(httpMessage.host) as targets
+    dc(httpMessage.host) as target_count
+    values(geo.country) as countries
+    min(_time) as first_seen
+    max(_time) as last_seen
+    by geo.asn
+| eval duration_sec=(last_seen - first_seen) + 1
+| eval rps=round(total_requests / duration_sec, 0)
+| eval requests_fmt=tostring(total_requests, "commas")
+| eval ips_fmt=tostring(unique_ips, "commas")
+| eval rps_fmt=tostring(rps, "commas")
+| eval severity=case(
+    rps >= 1000000, "CRITICAL",
+    rps >= 100000, "HIGH",
+    rps >= 10000, "MEDIUM",
+    rps >= 1000, "LOW",
+    1=1, "INFO")
+| eval first_time=strftime(first_seen, "%Y-%m-%d %H:%M")
+| eval last_time=strftime(last_seen, "%Y-%m-%d %H:%M")
+| eval attack_summary=mvjoin(mvindex(attack_types, 0, 3), " | ")
+| eval target_summary=mvjoin(mvindex(targets, 0, 2), ", ")
+| eval country_summary=mvjoin(countries, ", ")
+| sort - rps
+| head 50
+| table geo.asn, rps_fmt, severity, requests_fmt, ips_fmt, attack_types_count, attack_summary, country_summary, first_time, last_time, target_summary
+| rename 
+    geo.asn as "ASN"
+    rps_fmt as "RPS"
+    severity as "Severity"
+    requests_fmt as "Requests"
+    ips_fmt as "IPs"
+    attack_types_count as "Attack Types"
+    attack_summary as "Methods"
+    country_summary as "Countries"
+    first_time as "First"
+    last_time as "Last"
+    target_summary as "Targets"
