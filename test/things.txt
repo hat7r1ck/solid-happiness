@@ -239,3 +239,43 @@ index=akami earliest=-24h@h latest=now
 | rename attack_category as "Attack Type", events_fmt as "Events", severity as "Severity", ips_fmt as "Source IPs", country_count as "Countries", first_time as "First Seen", last_time as "Last Seen", duration_hours as "Duration (hrs)", target_display as "Targets"
 
 
+index=akami earliest=-14d@d latest=now
+| stats 
+    count as total_events
+    dc(attackData.rules{}.message) as attack_techniques
+    values(httpMessage.host) as targets
+    dc(httpMessage.host) as unique_targets
+    values(geo.country) as country
+    values(geo.asn) as asn
+    min(_time) as first_seen
+    max(_time) as last_seen
+    by attackData.clientIP
+| where total_events > 100
+| eval duration_sec=(last_seen - first_seen)
+| eval rps=round(total_events / duration_sec, 2)
+| eval events_fmt=tostring(total_events, "commas")
+| eval rps_fmt=tostring(rps, "commas")
+| eval severity=case(
+    rps >= 1000, "CRITICAL",
+    rps >= 100, "HIGH",
+    rps >= 10, "MEDIUM",
+    1=1, "LOW")
+| eval first_time=strftime(first_seen, "%Y-%m-%d %H:%M UTC")
+| eval last_time=strftime(last_seen, "%Y-%m-%d %H:%M UTC")
+| eval duration_display=tostring(round(duration_sec/60, 0)) + "m"
+| eval target_list=if(unique_targets > 3, mvjoin(mvindex(targets, 0, 2), ", ") + " (+" + tostring(unique_targets - 3) + " more)", mvjoin(targets, ", "))
+| sort - rps
+| head 50
+| table attackData.clientIP, rps_fmt, events_fmt, severity, attack_techniques, country, asn, first_time, last_time, duration_display, target_list
+| rename 
+    attackData.clientIP as "Source IP"
+    rps_fmt as "RPS"
+    events_fmt as "Total Requests"
+    severity as "Severity"
+    attack_techniques as "Techniques"
+    country as "Country"
+    asn as "ASN"
+    first_time as "First Seen"
+    last_time as "Last Seen"
+    duration_display as "Duration"
+    target_list as "Targets"
