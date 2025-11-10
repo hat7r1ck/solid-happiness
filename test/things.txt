@@ -296,3 +296,59 @@ index=akami earliest=-24h@h latest=now
 | sort limit=20 - total_events
 | table attack_category, events_fmt, severity, ips_fmt, country_count, first_time, last_time, duration_hours, target_display
 | rename attack_category as "Attack Type", events_fmt as "Events", severity as "Severity", ips_fmt as "Source IPs", country_count as "Countries", first_time as "First Seen", last_time as "Last Seen", duration_hours as "Duration (hrs)", target_display as "Targets"
+
+
+index=akami earliest=-14d@d latest=now
+| rex field=httpMessage.requestHeaders "User-Agent:\s+(?<user_agent>[^\r\n]+)"
+| rex field=attackData.rules{}.message "(?<attack_type>^[^(|]+)"
+| eval attack_type=trim(attack_type)
+| stats 
+    count as total_requests
+    dc(attackData.clientIP) as unique_ips
+    dc(attack_type) as attack_types_count
+    values(attack_type) as attack_types
+    dc(user_agent) as unique_user_agents
+    values(user_agent) as user_agents
+    values(httpMessage.host) as targets
+    dc(httpMessage.host) as target_count
+    values(geo.country) as countries
+    dc(geo.country) as country_count
+    min(_time) as first_seen
+    max(_time) as last_seen
+    by geo.asn
+| where isnotnull(geo.asn) AND total_requests > 1000
+| eval duration_sec=(last_seen - first_seen) + 1
+| eval rps=round(total_requests / duration_sec, 0)
+| eval requests_fmt=tostring(total_requests, "commas")
+| eval ips_fmt=tostring(unique_ips, "commas")
+| eval rps_fmt=tostring(rps, "commas")
+| eval severity=case(
+    rps >= 1000000, "CRITICAL (1M+ RPS)",
+    rps >= 100000, "HIGH (100K-1M RPS)",
+    rps >= 10000, "MEDIUM (10K-100K RPS)",
+    rps >= 1000, "LOW (1K-10K RPS)",
+    1=1, "INFO")
+| eval first_time=strftime(first_seen, "%Y-%m-%d %H:%M UTC")
+| eval last_time=strftime(last_seen, "%Y-%m-%d %H:%M UTC")
+| eval duration_min=tostring(round(duration_sec/60, 0)) + "m"
+| eval attack_summary=if(attack_types_count > 5, mvjoin(mvindex(attack_types, 0, 4), " | ") + " (+" + tostring(attack_types_count - 5) + " more)", mvjoin(attack_types, " | "))
+| eval ua_summary=if(unique_user_agents > 3, mvjoin(mvindex(user_agents, 0, 2), " | ") + " (+" + tostring(unique_user_agents - 3) + " more)", if(unique_user_agents > 0, mvjoin(user_agents, " | "), "N/A"))
+| eval target_summary=if(target_count > 3, mvjoin(mvindex(targets, 0, 2), ", ") + " (+" + tostring(target_count - 3) + " more)", mvjoin(targets, ", "))
+| eval country_summary=if(country_count > 5, mvjoin(mvindex(countries, 0, 4), ", ") + " (+" + tostring(country_count - 5) + " more)", mvjoin(countries, ", "))
+| sort - rps
+| head 30
+| table geo.asn, rps_fmt, severity, requests_fmt, ips_fmt, attack_types_count, attack_summary, ua_summary, country_summary, first_time, last_time, duration_min, target_summary
+| rename 
+    geo.asn as "ASN"
+    rps_fmt as "RPS"
+    severity as "Severity"
+    requests_fmt as "Total Requests"
+    ips_fmt as "Unique IPs"
+    attack_types_count as "Attack Types"
+    attack_summary as "Attack Methods"
+    ua_summary as "User Agents"
+    country_summary as "Countries"
+    first_time as "First Seen"
+    last_time as "Last Seen"
+    duration_min as "Duration"
+    target_summary as "Targets"
