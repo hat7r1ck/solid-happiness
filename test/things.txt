@@ -1,0 +1,37 @@
+index=akami sourcetype=<your_cim_sourcetype> earliest=-14d@d latest=now
+| bin _time span=1s
+| stats count as events_per_second 
+    dc(src_ip) as unique_source_ips 
+    dc(http_user_agent) as unique_user_agents
+    dc(dest_ip) as unique_targets
+    values(src_ip) as source_ips 
+    values(http_user_agent) as user_agents
+    values(src_country) as source_countries
+    values(src_city) as source_cities
+    values(http_method) as http_methods
+    values(dest_ip) as targeted_ips
+    values(url) as targeted_urls
+    values(status) as http_status_codes
+    sum(bytes) as total_bytes
+    by _time
+| where events_per_second > 1000000
+| eval events_per_second_formatted=tostring(events_per_second, "commas")
+| eval total_gb=round(total_bytes/1024/1024/1024, 2)
+| eval attack_severity=case(
+    events_per_second >= 7000000, "🔴 CRITICAL - 7M+ EPS",
+    events_per_second >= 5000000, "🟠 HIGH - 5M+ EPS",
+    events_per_second >= 1000000, "🟡 ELEVATED - 1M+ EPS")
+| eval time_of_attack=strftime(_time, "%Y-%m-%d %H:%M:%S %Z")
+| eval duration_seconds=1
+| eval source_ips_top10=mvindex(source_ips, 0, 9)
+| eval source_ips_display=if(mvcount(source_ips) > 10, mvjoin(source_ips_top10, ", ") + " ... [+" + tostring(mvcount(source_ips) - 10, "commas") + " more IPs]", mvjoin(source_ips, ", "))
+| eval user_agents_top5=mvindex(user_agents, 0, 4)
+| eval user_agents_display=if(mvcount(user_agents) > 5, mvjoin(user_agents_top5, " | ") + " ... [+" + tostring(mvcount(user_agents) - 5, "commas") + " more]", mvjoin(user_agents, " | "))
+| eval attack_pattern=case(
+    unique_source_ips < 100 AND events_per_second > 5000000, "Concentrated Attack (Few IPs, High Volume)",
+    unique_source_ips > 10000, "Distributed Botnet (Many IPs)",
+    unique_user_agents < 5, "Scripted/Automated Attack",
+    1=1, "Mixed Pattern")
+| table time_of_attack, events_per_second_formatted, attack_severity, attack_pattern, unique_source_ips, source_ips_display, unique_user_agents, user_agents_display, source_countries, http_methods, targeted_urls, http_status_codes, total_gb
+| sort -events_per_second_formatted
+| rename time_of_attack as "Date/Time", events_per_second_formatted as "Events/Sec", attack_severity as "Severity", attack_pattern as "Attack Pattern", unique_source_ips as "Unique IPs", source_ips_display as "Top Source IPs (Sample)", unique_user_agents as "Unique UAs", user_agents_display as "Top User Agents (Sample)", source_countries as "Countries", http_methods as "HTTP Methods", targeted_urls as "Targeted URLs", http_status_codes as "HTTP Status Codes", total_gb as "Total GB"
