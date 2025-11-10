@@ -37,3 +37,33 @@ index=akami earliest=-14d@d latest=now
 | table time_of_attack, events_per_second_formatted, attack_severity, attack_pattern, unique_source_ips, source_ips_display, unique_user_agents, user_agents_display, source_countries, source_cities, source_asn, http_methods, targeted_hosts, targeted_paths, http_status_codes, attack_rule_ids, attack_rule_messages, total_gb
 | sort -events_per_second_formatted
 | rename time_of_attack as "Date/Time", events_per_second_formatted as "Events/Sec", attack_severity as "Severity", attack_pattern as "Attack Pattern", unique_source_ips as "Unique IPs", source_ips_display as "Top Source IPs (Sample)", unique_user_agents as "Unique UAs", user_agents_display as "Top User Agents (Sample)", source_countries as "Countries", source_cities as "Cities", source_asn as "ASN", http_methods as "HTTP Methods", targeted_hosts as "Targeted Hosts", targeted_paths as "Targeted Paths", http_status_codes as "Status Codes", attack_rule_ids as "WAF Rule IDs", attack_rule_messages as "WAF Rule Messages", total_gb as "Total GB"
+
+
+
+
+index=akami earliest=-14d@d latest=now
+| bin _time span=1s
+| stats count as events_per_second 
+    dc(attackData.clientIP) as unique_source_ips 
+    values(geo.country) as source_countries
+    values(httpMessage.method) as http_methods
+    values(httpMessage.host) as targeted_hosts
+    max(attackData.rules{}.message) as primary_attack_type
+    by _time
+| where events_per_second > 1000
+| eval events_per_second_formatted=tostring(events_per_second, "commas")
+| eval attack_severity=case(
+    events_per_second >= 1000000, "CRITICAL",
+    events_per_second >= 100000, "HIGH",
+    events_per_second >= 10000, "MEDIUM",
+    events_per_second >= 1000, "LOW",
+    1=1, "INFO")
+| eval time_of_attack=strftime(_time, "%Y-%m-%d %H:%M:%S UTC")
+| eval countries_display=mvindex(source_countries, 0, 4)
+| eval countries_summary=if(mvcount(source_countries) > 5, mvjoin(countries_display, ", ") + " (+" + tostring(mvcount(source_countries) - 5, "commas") + " more)", mvjoin(source_countries, ", "))
+| eval target_summary=mvindex(targeted_hosts, 0, 2)
+| table time_of_attack, events_per_second_formatted, attack_severity, unique_source_ips, countries_summary, primary_attack_type, target_summary
+| sort -events_per_second_formatted
+| head 50
+| rename time_of_attack as "Time (UTC)", events_per_second_formatted as "Events/Sec", attack_severity as "Severity", unique_source_ips as "Source IPs", countries_summary as "Origin Countries", primary_attack_type as "Attack Type", target_summary as "Targets"
+
