@@ -637,3 +637,59 @@ index=akami earliest=-14d@d latest=now
     duration_min as "Duration (min)",
     target_summary as "Targets",
     attack_summary as "Attack Types"
+
+
+
+index=akami earliest=-14d@d latest=now
+| rex field=httpMessage.requestHeaders "User-Agent:\s+(?<user_agent>[^\r\n]+)"
+| rex field=attackData.rules{}.message "(?<attack_type>^[^(|]+)"
+| eval attack_type=trim(attack_type), user_agent=coalesce(user_agent, "N/A")
+| stats 
+    count AS total_requests,
+    dc(attackData.clientIP) AS unique_ips,
+    dc(httpMessage.host) AS unique_targets,
+    dc(geo.country) AS country_count,
+    values(geo.country) AS countries,
+    values(geo.asn) AS asn,
+    min(_time) AS first_seen,
+    max(_time) AS last_seen,
+    dc(user_agent) AS unique_user_agents,
+    values(attack_type) AS raw_attack_types
+  BY geo.asn, user_agent
+| eval duration_sec = (last_seen - first_seen) + 1
+| eval rps = round(total_requests / duration_sec, 2)
+| eval severity = case(
+    rps >= 1000000, "CRITICAL",
+    rps >= 100000, "HIGH",
+    rps >= 10000, "MEDIUM",
+    rps >= 1000, "LOW",
+    1=1, "NORMAL"
+)
+| eval first_seen_str = strftime(first_seen, "%Y-%m-%d %H:%M UTC")
+| eval last_seen_str = strftime(last_seen, "%Y-%m-%d %H:%M UTC")
+| eval duration_min = round(duration_sec / 60, 1)
+| eval requests_fmt = tostring(total_requests, "commas")
+| eval rps_fmt = tostring(rps, "commas")
+| eval country_summary = if(country_count > 4, mvjoin(mvindex(countries, 0, 3), ", ") . " (+" . tostring(country_count - 3) . " more)", mvjoin(countries, ", "))
+| eval attack_types = mvsort(mvdedup(raw_attack_types))
+| eval attack_summary = if(
+    mvcount(attack_types) > 5,
+    mvjoin(mvindex(attack_types, 0, 4), "; ") . "; (+" . tostring(mvcount(attack_types) - 5) . " more)",
+    mvjoin(attack_types, "; ")
+)
+| sort - rps
+| head 30
+| table asn, rps_fmt, severity, requests_fmt, unique_ips, unique_user_agents, country_summary, first_seen_str, last_seen_str, duration_min, unique_targets, attack_summary
+| rename 
+    asn as "ASN",
+    rps_fmt as "RPS",
+    severity as "Severity",
+    requests_fmt as "Total Requests",
+    unique_ips as "Unique IPs",
+    unique_user_agents as "Unique UAs",
+    country_summary as "Countries",
+    first_seen_str as "First Seen",
+    last_seen_str as "Last Seen",
+    duration_min as "Duration (min)",
+    unique_targets as "Unique Targets",
+    attack_summary as "Attack Types"
