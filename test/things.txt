@@ -766,3 +766,69 @@ index=akami earliest=-14d@d latest=now
     duration_min AS "Duration (min)",
     total_unique_targets AS "Unique Targets",
     attack_summary AS "Attack Types"
+
+
+index=akami earliest=-14d@d latest=now
+| rex field=httpMessage.requestHeaders "User-Agent:\s+(?<user_agent>[^\r\n]+)"
+| rex field=attackData.rules{}.message "(?<attack_type>^[^(|]+)"
+| eval user_agent=coalesce(user_agent,"N/A"), attack_type=trim(attack_type)
+| bin _time span=1m
+| stats count as bucket_requests
+        dc(attackData.clientIP) as bucket_unique_ips
+        dc(httpMessage.host) as bucket_unique_targets
+        dc(user_agent) as bucket_unique_uas
+        values(geo.country) as bucket_countries
+        values(attack_type) as bucket_attack_types
+        min(_time) as bucket_start
+        max(_time) as bucket_end
+    by geo.asn, _time
+| eval bucket_rps=round(bucket_requests/60,2)
+| where bucket_rps > 0
+| sort 0 geo.asn _time
+| streamstats current=f window=1 last(_time) as prev_time by geo.asn
+| eval gap=_time - prev_time
+| eval new_attack=if(isnull(prev_time) OR gap > 600,1,0)
+| streamstats sum(new_attack) as attack_id by geo.asn
+| stats sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        avg(bucket_rps) as avg_rps
+        max(bucket_unique_ips) as unique_ips
+        max(bucket_unique_targets) as unique_targets
+        max(bucket_unique_uas) as unique_uas
+        values(bucket_countries) as countries
+        values(bucket_attack_types) as all_attack_types
+        min(bucket_start) as first_seen
+        max(bucket_end) as last_seen
+    by geo.asn, attack_id
+| eval duration_sec=last_seen - first_seen + 60
+| eval rps=round(total_requests/duration_sec,2)
+| eval severity=case(
+        rps >= 1000000,"CRITICAL",
+        rps >= 100000,"HIGH",
+        rps >= 10000,"MEDIUM",
+        rps >= 1000,"LOW",
+        1=1,"NORMAL"
+    )
+| eval first_seen_str=strftime(first_seen,"%Y-%m-%d %H:%M UTC")
+| eval last_seen_str=strftime(last_seen,"%Y-%m-%d %H:%M UTC")
+| eval duration_min=round(duration_sec/60,1)
+| eval requests_fmt=tostring(total_requests,"commas")
+| eval rps_fmt=tostring(rps,"commas")
+| eval country_summary=if(mvcount(countries)>4,mvjoin(mvindex(countries,0,3),", ") . " (+" . tostring(mvcount(countries)-3) . " more)",mvjoin(countries,", "))
+| eval attack_type_list=mvsort(mvdedup(all_attack_types))
+| eval attack_summary=if(mvcount(attack_type_list)>5,mvjoin(mvindex(attack_type_list,0,4),"; ") . "; (+" . tostring(mvcount(attack_type_list)-5) . " more)",mvjoin(attack_type_list,"; "))
+| where rps >= 100
+| sort - rps
+| table geo.asn, rps_fmt, severity, requests_fmt, unique_ips, unique_uas, country_summary, first_seen_str, last_seen_str, duration_min, unique_targets, attack_summary
+| rename geo.asn as "ASN",
+        rps_fmt as "RPS",
+        severity as "Severity",
+        requests_fmt as "Total Requests",
+        unique_ips as "Unique IPs",
+        unique_uas as "Unique UAs",
+        country_summary as "Countries",
+        first_seen_str as "First Seen",
+        last_seen_str as "Last Seen",
+        duration_min as "Duration (min)",
+        unique_targets as "Unique Targets",
+        attack_summary as "Attack Types"
