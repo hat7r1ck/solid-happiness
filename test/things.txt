@@ -832,3 +832,68 @@ index=akami earliest=-14d@d latest=now
         duration_min as "Duration (min)",
         unique_targets as "Unique Targets",
         attack_summary as "Attack Types"
+
+
+
+
+index=akami earliest=-14d@d latest=now
+| rex field=httpMessage.requestHeaders "User-Agent:\s+(?<user_agent>[^\r\n]+)"
+| rex field=attackData.rules{}.message "(?<attack_type>^[^(|]+)"
+| eval user_agent=coalesce(user_agent,"N/A"), attack_type=trim(attack_type)
+| bin _time span=1m
+| stats count as bucket_requests
+        dc(attackData.clientIP) as bucket_unique_ips
+        dc(httpMessage.host) as bucket_unique_targets
+        values(geo.country) as bucket_countries
+        values(attack_type) as bucket_attack_types
+    by geo.asn, _time
+| eval bucket_rps=round(bucket_requests/60,2)
+| stats sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        avg(bucket_rps) as avg_rps
+        max(bucket_unique_ips) as unique_ips
+        max(bucket_unique_targets) as unique_targets
+        values(bucket_countries) as countries
+        values(bucket_attack_types) as all_attack_types
+        min(_time) as first_seen
+        max(_time) as last_seen
+    by geo.asn
+| eval duration_sec=last_seen - first_seen + 60
+| eval severity=case(
+        peak_rps >= 100000, "CRITICAL",
+        peak_rps >= 10000, "HIGH",
+        peak_rps >= 1000, "MEDIUM",
+        peak_rps >= 100, "LOW",
+        1=1, "NORMAL"
+    )
+| eval first_seen_str=strftime(first_seen, "%Y-%m-%d %H:%M UTC")
+| eval last_seen_str=strftime(last_seen, "%Y-%m-%d %H:%M UTC")
+| eval duration_min=round(duration_sec/60,1)
+| eval requests_fmt=tostring(total_requests, "commas")
+| eval peak_rps_fmt=tostring(peak_rps, "commas")
+| eval country_summary=if(
+        mvcount(countries)>4,
+        mvjoin(mvindex(countries,0,3), ", ") . " (+" . tostring(mvcount(countries)-3) . " more)",
+        mvjoin(countries, ", ")
+    )
+| eval attack_type_list=mvsort(mvdedup(all_attack_types))
+| eval attack_summary=if(
+        mvcount(attack_type_list)>5,
+        mvjoin(mvindex(attack_type_list,0,4), "; ") . "; (+" . tostring(mvcount(attack_type_list)-5) . " more)",
+        mvjoin(attack_type_list, "; ")
+    )
+| where peak_rps >= 100
+| sort - peak_rps
+| table geo.asn, peak_rps_fmt, severity, requests_fmt, unique_ips, country_summary, first_seen_str, last_seen_str, duration_min, unique_targets, attack_summary
+| rename 
+        geo.asn as "ASN",
+        peak_rps_fmt as "Peak RPS",
+        severity as "Severity",
+        requests_fmt as "Total Requests",
+        unique_ips as "Unique IPs",
+        country_summary as "Countries",
+        first_seen_str as "First Seen",
+        last_seen_str as "Last Seen",
+        duration_min as "Duration (min)",
+        unique_targets as "Unique Targets",
+        attack_summary as "Attack Types"
