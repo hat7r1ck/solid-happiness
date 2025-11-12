@@ -1,4 +1,64 @@
 index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
+| bin _time span=30s
+| stats count as bucket_requests
+        dc(attackData.clientIP) as bucket_unique_ips
+        values(identity.tlsFingerprintV3) as tls_v3
+        values(identity.tlsFingerprintV2) as tls_v2
+        values(identity.ja3Fingerprint) as ja3
+        values(attackData.rules{}.id) as rule_ids
+        values(attackData.rules{}.tag) as tags
+        values(geo.country) as bucket_countries
+    by geo.asn, httpMessage.host, _time
+| eval bucket_rps=round(bucket_requests/30, 2)
+| sort 0 geo.asn, httpMessage.host, _time
+| streamstats current=f window=1 last(_time) as prev_time by geo.asn, httpMessage.host
+| eval gap=_time - prev_time
+| eval new_session=if(isnull(prev_time) OR gap>600, 1, 0)
+| streamstats sum(new_session) as session_id by geo.asn, httpMessage.host
+| stats min(_time) as start
+        max(_time) as stop
+        sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        avg(bucket_rps) as avg_rps
+        max(bucket_unique_ips) as unique_ips
+        dc(tls_v3) as tls_v3_count
+        dc(tls_v2) as tls_v2_count
+        dc(ja3) as ja3_count
+        values(bucket_countries) as countries
+        values(tags) as tags
+        values(rule_ids) as rule_ids
+    by geo.asn, httpMessage.host, session_id
+| eval duration_min=round((stop - start + 30)/60, 1)
+| eval first_seen=strftime(start, "%Y-%m-%d %H:%M:%S UTC")
+| eval last_seen=strftime(stop, "%Y-%m-%d %H:%M:%S UTC")
+| eval total_requests_fmt=tostring(total_requests, "commas")
+| eval peak_rps_fmt=tostring(peak_rps, "commas")
+| eval avg_rps_fmt=tostring(avg_rps, "commas")
+| eval countries_summary=mvjoin(mvdedup(countries), ", ")
+| eval tags_summary=mvjoin(mvsort(mvdedup(tags)), "; ")
+| eval rules_summary=mvjoin(mvsort(mvdedup(rule_ids)), "; ")
+| where total_requests>=100 OR peak_rps>=10
+| sort - peak_rps
+| table geo.asn httpMessage.host first_seen last_seen duration_min peak_rps_fmt avg_rps_fmt total_requests_fmt unique_ips tls_v3_count tls_v2_count ja3_count countries_summary tags_summary rules_summary
+| rename geo.asn as "ASN"
+        httpMessage.host as "Target Host"
+        first_seen as "First Seen"
+        last_seen as "Last Seen"
+        duration_min as "Duration (min)"
+        peak_rps_fmt as "Max Peak RPS"
+        avg_rps_fmt as "Avg RPS"
+        total_requests_fmt as "Total Requests"
+        unique_ips as "Unique IPs"
+        tls_v3_count as "TLSv3 FP Count"
+        tls_v2_count as "TLSv2 FP Count"
+        ja3_count as "JA3 Count"
+        countries_summary as "Countries"
+        tags_summary as "Tags"
+        rules_summary as "Rule IDs"
+
+
+
+index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
 | eval tls_v3=identity.tlsFingerprintV3, tls_v2=identity.tlsFingerprintV2, ja3=identity.ja3Fingerprint
 | eval cookie_id=coalesce(httpMessage.cookies.JSESSIONID, httpMessage.cookies.SESSIONID)
 | eval key_raw=coalesce(ja3, tls_v3, tls_v2, cookie_id)
