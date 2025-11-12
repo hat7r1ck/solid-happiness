@@ -1,4 +1,87 @@
 index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
+| where isnotnull(geo.asn) AND geo.asn!="" AND lower(geo.asn)!="unknown"
+  AND isnotnull(httpMessage.host) AND httpMessage.host!="" AND lower(httpMessage.host)!="unknown"
+| bin _time span=30s
+| stats count as bucket_requests
+        dc(attackData.clientIP) as bucket_unique_ips
+        values(httpMessage.host) as bucket_hosts
+        values(geo.country) as bucket_countries
+        values(attackData.rules{}.id) as bucket_rule_ids
+        values(attackData.rules{}.tag) as bucket_tags
+    by geo.asn _time
+| eval bucket_rps=round(bucket_requests/30,0)
+| sort 0 geo.asn _time
+| streamstats current=f window=1 last(_time) as prev_time by geo.asn
+| eval gap=_time - prev_time
+| eval new_session=if(isnull(prev_time) OR gap>600,1,0)
+| streamstats sum(new_session) as session_id by geo.asn
+| stats min(_time) as start
+        max(_time) as stop
+        sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        sum(bucket_unique_ips) as bucketed_unique_ips
+        values(bucket_hosts) as hosts
+        values(bucket_countries) as countries
+        values(bucket_rule_ids) as rule_ids
+        values(bucket_tags) as tags
+    by geo.asn session_id
+| eval duration_sec=stop - start + 30
+| stats sum(total_requests) as total_requests_all
+        max(peak_rps) as max_peak_rps
+        sum(duration_sec) as active_sec
+        count as sessions
+        values(hosts) as all_hosts
+        values(countries) as countries
+        values(rule_ids) as rule_ids
+        values(tags) as tags
+        min(start) as first_seen
+        max(stop) as last_seen
+    by geo.asn
+| eval active_min=round(active_sec/60,0)
+| eval span_min=round((last_seen - first_seen)/60,0)
+| eval overall_rps=if(active_sec>0,round(total_requests_all/active_sec,0),0)
+| eval hosts_flat=mvdedup(all_hosts)
+| eval unique_targets=mvcount(hosts_flat)
+| eval primary_targets=if(unique_targets>3,
+                          mvjoin(mvindex(hosts_flat,0,2), ", ")." (+".tostring(unique_targets-3,"commas")." more)",
+                          mvjoin(hosts_flat,", "))
+| eval countries_flat=mvdedup(countries)
+| eval countries_summary=if(mvcount(countries_flat)>5,
+                            mvjoin(mvindex(countries_flat,0,4), ", ")." (+".tostring(mvcount(countries_flat)-5,"commas")." more)",
+                            mvjoin(countries_flat,", "))
+| eval rule_id_count=mvcount(mvdedup(rule_ids))
+| eval tag_count=mvcount(mvdedup(tags))
+| eval max_peak_rps_fmt=tostring(max_peak_rps,"commas")
+| eval overall_rps_fmt=tostring(overall_rps,"commas")
+| eval total_requests_fmt=tostring(total_requests_all,"commas")
+| eval first_str=strftime(first_seen,"%Y-%m-%d %H:%M:%S UTC")
+| eval last_str=strftime(last_seen,"%Y-%m-%d %H:%M:%S UTC")
+| eval severity=case(max_peak_rps>=100000,"CRITICAL",
+                     max_peak_rps>=10000,"HIGH",
+                     max_peak_rps>=1000,"MEDIUM",
+                     max_peak_rps>=100,"LOW",
+                     1=1,"NORMAL")
+| where max_peak_rps>=50 OR total_requests_all>=5000
+| sort - max_peak_rps
+| table geo.asn first_str last_str span_min active_min sessions max_peak_rps_fmt overall_rps_fmt severity total_requests_fmt unique_targets primary_targets countries_summary rule_id_count tag_count
+| rename geo.asn as "ASN"
+        first_str as "First Seen"
+        last_str as "Last Seen"
+        span_min as "Span (min)"
+        active_min as "Active (min)"
+        sessions as "Sessions"
+        max_peak_rps_fmt as "Max Peak RPS"
+        overall_rps_fmt as "Overall RPS"
+        total_requests_fmt as "Total Requests"
+        unique_targets as "Unique Targets"
+        primary_targets as "Primary Targets"
+        countries_summary as "Countries"
+        rule_id_count as "Rule IDs (count)"
+        tag_count as "Tags (count)"
+
+
+
+index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
 | eval asn=coalesce(geo.asn,"asn_unknown")
 | rex field=httpMessage.requestHeaders "User-Agent:\s*(?<user_agent>[^\r\n]+)"
 | eval ua_norm=lower(replace(coalesce(user_agent,"unknown_ua"),"\d+(\.\d+)*",""))
