@@ -1,5 +1,96 @@
 index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
 | eval asn=coalesce(geo.asn,"asn_unknown")
+| rex field=httpMessage.requestHeaders "User-Agent:\s*(?<user_agent>[^\r\n]+)"
+| eval ua_norm=lower(replace(coalesce(user_agent,"unknown_ua"),"\d+(\.\d+)*",""))
+| eval ua_norm=replace(ua_norm,"[^a-z0-9]+","_")
+| eval cookie_id=coalesce(httpMessage.cookies.JSESSIONID,httpMessage.cookies.SESSIONID)
+| eval tls_fp=if(len(identity.tlsFingerprintV3)>0,identity.tlsFingerprintV3,null())
+| eval ja3=if(len(identity.ja3Fingerprint)>0,identity.ja3Fingerprint,null())
+| eval id_type=case(isnotnull(tls_fp),"TLS_FP",isnotnull(ja3),"JA3",isnotnull(cookie_id),"Cookie",1=1,"UA")
+| eval id_value=case(isnotnull(tls_fp),tls_fp,isnotnull(ja3),ja3,isnotnull(cookie_id),cookie_id,1=1,ua_norm)
+| eval host=coalesce(httpMessage.host,"host_unknown")
+| eval corr_key=asn."|".host."|".id_type."|".id_value
+| bin _time span=30s
+| stats count as bucket_requests
+        dc(attackData.clientIP) as bucket_unique_ips
+        values(geo.country) as bucket_countries
+        values(attackData.rules{}.tag) as bucket_tags
+        values(attackData.rules{}.id) as bucket_rule_ids
+    by asn host id_type id_value corr_key _time
+| eval bucket_rps=round(bucket_requests/30,2)
+| eventstats p95(bucket_rps) as p95 p99(bucket_rps) as p99 by corr_key
+| eval spike=if(bucket_rps>=200 OR bucket_rps>=(p95*3) OR bucket_rps>=(p99*1.5),1,0)
+| where spike=1
+| sort 0 corr_key _time
+| streamstats current=f window=1 last(_time) as prev_time by corr_key
+| eval gap=_time - prev_time
+| eval new_session=if(isnull(prev_time) OR gap>600,1,0)
+| streamstats sum(new_session) as session_id by corr_key
+| stats min(_time) as start
+        max(_time) as stop
+        sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        max(bucket_unique_ips) as unique_ips
+        values(bucket_countries) as countries
+        values(bucket_tags) as tags
+        values(bucket_rule_ids) as rule_ids
+    by asn host id_type id_value corr_key session_id
+| eval session_sec=stop - start + 30
+| eval session_min=round(session_sec/60,1)
+| stats sum(total_requests) as total_requests_all
+        max(peak_rps) as max_peak_rps
+        count as sessions
+        sum(session_sec) as active_sec
+        avg(session_min) as avg_session_min
+        max(session_min) as max_session_min
+        min(start) as first_seen
+        max(stop) as last_seen
+        sum(unique_ips) as unique_ips_est
+        values(countries) as countries
+        values(tags) as tags
+        values(rule_ids) as rule_ids
+    by asn host id_type id_value
+| eval active_min=round(active_sec/60,1)
+| eval span_min=round((last_seen - first_seen)/60,1)
+| eval overall_rps=if(active_sec>0,round(total_requests_all/active_sec,2),0)
+| eval countries_flat=mvdedup(countries)
+| eval countries_summary=if(mvcount(countries_flat)>5,mvjoin(mvindex(countries_flat,0,4),", ")." (+".tostring(mvcount(countries_flat)-5,"commas")." more)",mvjoin(countries_flat,", "))
+| eval tags_flat=mvdedup(tags)
+| eval tags_summary=if(mvcount(tags_flat)>5,mvjoin(mvindex(tags_flat,0,4),"; ")." (+".tostring(mvcount(tags_flat)-5,"commas")." more)",mvjoin(tags_flat,"; "))
+| eval rules_flat=mvdedup(rule_ids)
+| eval rules_summary=if(mvcount(rules_flat)>5,mvjoin(mvindex(rules_flat,0,4),"; ")." (+".tostring(mvcount(rules_flat)-5,"commas")." more)",mvjoin(rules_flat,"; "))
+| eval severity=case(max_peak_rps>=100000,"CRITICAL",max_peak_rps>=10000,"HIGH",max_peak_rps>=1000,"MEDIUM",max_peak_rps>=100,"LOW",1=1,"NORMAL")
+| eval first_str=strftime(first_seen,"%Y-%m-%d %H:%M:%S UTC")
+| eval last_str=strftime(last_seen,"%Y-%m-%d %H:%M:%S UTC")
+| eval max_peak_rps_fmt=tostring(max_peak_rps,"commas")
+| eval overall_rps_fmt=tostring(overall_rps,"commas")
+| eval total_requests_fmt=tostring(total_requests_all,"commas")
+| where max_peak_rps>=100 OR total_requests_all>=10000
+| sort - max_peak_rps
+| table asn host id_type id_value first_str last_str span_min active_min sessions avg_session_min max_session_min max_peak_rps_fmt overall_rps_fmt severity total_requests_fmt unique_ips_est countries_summary tags_summary rules_summary
+| rename asn as "ASN"
+        host as "Target Host"
+        id_type as "Key Type"
+        id_value as "Key Value"
+        first_str as "First Seen"
+        last_str as "Last Seen"
+        span_min as "Span (min)"
+        active_min as "Active (min)"
+        sessions as "Sessions"
+        avg_session_min as "Avg Session (min)"
+        max_session_min as "Max Session (min)"
+        max_peak_rps_fmt as "Max Peak RPS"
+        overall_rps_fmt as "Overall RPS"
+        total_requests_fmt as "Total Requests"
+        unique_ips_est as "Unique IPs (est)"
+        countries_summary as "Countries"
+        tags_summary as "Tags"
+        rules_summary as "Rule IDs"
+
+
+
+index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
+| eval asn=coalesce(geo.asn,"asn_unknown")
 | eval fid=coalesce(identity.tlsFingerprintV3, identity.ja3Fingerprint, httpMessage.cookies.JSESSIONID, httpMessage.cookies.SESSIONID, "no_fid")
 | eval key=asn + "|" + fid
 | bin _time span=30s
