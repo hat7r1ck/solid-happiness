@@ -1,4 +1,87 @@
 index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
+| eval asn=coalesce(geo.asn,"asn_unknown")
+| eval fid=coalesce(identity.tlsFingerprintV3, identity.ja3Fingerprint, httpMessage.cookies.JSESSIONID, httpMessage.cookies.SESSIONID, "no_fid")
+| eval key=asn + "|" + fid
+| bin _time span=30s
+| stats count as bucket_requests
+        dc(attackData.clientIP) as bucket_unique_ips
+        values(geo.country) as bucket_countries
+        values(attackData.rules{}.id) as bucket_rule_ids
+        values(attackData.rules{}.tag) as bucket_tags
+        by key httpMessage.host _time
+| eval bucket_rps=round(bucket_requests/30, 2)
+| stats sum(bucket_requests) as bucket_requests
+        sum(bucket_unique_ips) as bucket_unique_ips
+        values(httpMessage.host) as hosts
+        values(bucket_countries) as countries
+        values(bucket_rule_ids) as rule_ids
+        values(bucket_tags) as tags
+        by key _time
+| eval bucket_rps=round(bucket_requests/30, 2)
+| where bucket_rps>=10
+| sort 0 key _time
+| streamstats current=f window=1 last(_time) as prev_time by key
+| eval gap=_time - prev_time
+| eval new_session=if(isnull(prev_time) OR gap>600, 1, 0)
+| streamstats sum(new_session) as session_id by key
+| stats min(_time) as start
+        max(_time) as stop
+        sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        values(hosts) as all_hosts
+        values(countries) as all_countries
+        values(tags) as all_tags
+        values(rule_ids) as all_rule_ids
+        sum(bucket_unique_ips) as unique_ips_est
+        by key session_id
+| eval session_min=round((stop - start + 30)/60, 1)
+| stats sum(total_requests) as total_requests_all
+        max(peak_rps) as max_peak_rps
+        count as sessions
+        avg(session_min) as avg_session_min
+        min(start) as first_seen
+        max(stop) as last_seen
+        values(all_hosts) as hosts
+        values(all_countries) as countries
+        values(all_tags) as tags
+        values(all_rule_ids) as rule_ids
+        by key
+| rex field=key "^(?<asn>[^|]+)\|(?<fid>.*)$"
+| eval hosts_flat=mvdedup(hosts)
+| eval unique_targets=mvcount(hosts_flat)
+| eval primary_targets=if(unique_targets>3, mvjoin(mvindex(hosts_flat,0,2), ", ") + " (+" + tostring(unique_targets-3, "commas") + " more)", mvjoin(hosts_flat, ", "))
+| eval countries_flat=mvdedup(countries)
+| eval countries_summary=if(mvcount(countries_flat)>5, mvjoin(mvindex(countries_flat,0,4), ", ") + " (+" + tostring(mvcount(countries_flat)-5, "commas") + " more)", mvjoin(countries_flat, ", "))
+| eval tags_flat=mvdedup(tags)
+| eval tags_summary=if(mvcount(tags_flat)>5, mvjoin(mvindex(tags_flat,0,4), "; ") + " (+" + tostring(mvcount(tags_flat)-5, "commas") + " more)", mvjoin(tags_flat, "; "))
+| eval rule_ids_flat=mvdedup(rule_ids)
+| eval rules_summary=if(mvcount(rule_ids_flat)>5, mvjoin(mvindex(rule_ids_flat,0,4), "; ") + " (+" + tostring(mvcount(rule_ids_flat)-5, "commas") + " more)", mvjoin(rule_ids_flat, "; "))
+| eval span_min=round((last_seen - first_seen)/60, 1)
+| eval first_str=strftime(first_seen, "%Y-%m-%d %H:%M:%S UTC")
+| eval last_str=strftime(last_seen, "%Y-%m-%d %H:%M:%S UTC")
+| eval total_requests_fmt=tostring(total_requests_all, "commas")
+| eval max_peak_rps_fmt=tostring(max_peak_rps, "commas")
+| where max_peak_rps>=50 OR total_requests_all>=5000
+| sort - max_peak_rps
+| table asn fid first_str last_str span_min sessions avg_session_min max_peak_rps_fmt total_requests_fmt unique_targets primary_targets countries_summary tags_summary rules_summary
+| rename asn as "ASN"
+        fid as "Correlation Key"
+        first_str as "First Seen"
+        last_str as "Last Seen"
+        span_min as "Span (min)"
+        sessions as "Sessions"
+        avg_session_min as "Avg Session (min)"
+        max_peak_rps_fmt as "Max Peak RPS"
+        total_requests_fmt as "Total Requests"
+        unique_targets as "Unique Targets"
+        primary_targets as "Primary Targets"
+        countries_summary as "Countries"
+        tags_summary as "Tags"
+        rules_summary as "Rule IDs"
+
+
+
+index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
 | bin _time span=30s
 | stats count as bucket_requests
         dc(attackData.clientIP) as bucket_unique_ips
