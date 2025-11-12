@@ -1,139 +1,6 @@
 {
-  "title": "Mission Control Entity Correlation",
-  "description": "Correlates Splunk ES risk activity and Mission Control cases for a given entity.",
-  "visualizations": {
-    "viz_cases_table": {
-      "type": "splunk.table",
-      "title": "Mission Control Cases Related to Entity",
-      "dataSources": { "primary": "ds_cases_from_notables" },
-      "options": { "count": 20, "wrap": true },
-      "eventHandlers": [
-        {
-          "type": "drilldown.customUrl",
-          "options": {
-            "url": "/app/mission-control/incidents/$row.mc_incident_id.value$",
-            "target": "blank"
-          }
-        }
-      ]
-    },
-    "viz_risk_timeline": {
-      "type": "splunk.area",
-      "title": "Risk Timeline for Entity",
-      "dataSources": { "primary": "ds_risk_timeline" },
-      "options": {
-        "height": 300
-      }
-    },
-    "viz_top_rules": {
-      "type": "splunk.table",
-      "title": "Top Risk Rules for Entity",
-      "dataSources": { "primary": "ds_top_risk_rules" },
-      "options": { "count": 10 }
-    },
-    "viz_risk_findings": {
-      "type": "splunk.table",
-      "title": "Accelerated Risk Findings (MITRE Context)",
-      "dataSources": { "primary": "ds_risk_findings_fast" },
-      "options": { "count": 20, "wrap": true },
-      "eventHandlers": [
-        {
-          "type": "drilldown.customUrl",
-          "options": {
-            "url": "/app/search/search?q=%7Ctstats%20summariesonly%3Df%20from%20datamodel%3DRisk.All_Risk%20where%20All_Risk.risk_object%3D%22$tok_entity$%22%20by%20All_Risk%2A&earliest=$global_time.earliest$&latest=$global_time.latest$",
-            "target": "blank"
-          }
-        }
-      ]
-    }
-  },
-  "dataSources": {
-    "ds_cases_from_notables": {
-      "type": "ds.search",
-      "options": {
-        "query":
-"index=notable mc_incident_id=* \n\
-| eval _entity=lower(\"$tok_entity$\"), _etype=\"$tok_etype$\" \n\
-| eval _m_user = lower(coalesce(user, src_user, dest_user, Account_Name, user_name)) \n\
-| eval _m_host = lower(coalesce(host, dest, dvc, dest_nt_host, src_nt_host)) \n\
-| eval _m_ip   = coalesce(src, dest, src_ip, dest_ip) \n\
-| eval _m_mail = lower(coalesce(user_email, src_user_email, dest_user_email, recipient, sender)) \n\
-| eval _m_dom  = lower(coalesce(url_domain, query, dest_dns, domain)) \n\
-| eval _m_url  = lower(coalesce(url, uri, request)) \n\
-| eval _m_hash = lower(coalesce(file_hash, sha256, sha1, md5)) \n\
-| eval _m_risk = lower(risk_object) \n\
-| eval _match = case( \n\
-  _etype=\"user\", _m_user=_entity, \n\
-  _etype=\"ip\", cidrmatch(_entity, _m_ip) OR _m_ip=_entity, \n\
-  _etype=\"host\", _m_host=_entity, \n\
-  _etype=\"email\", _m_mail=_entity, \n\
-  _etype=\"domain\", _m_dom=_entity, \n\
-  _etype=\"url\", like(_m_url, \"%\" . _entity . \"%\"), \n\
-  _etype=\"hash\", _m_hash=_entity, \n\
-  _etype=\"risk_object\", _m_risk=_entity, \n\
-  true(), _m_user=_entity OR _m_host=_entity OR _m_ip=_entity OR _m_mail=_entity OR _m_dom=_entity OR like(_m_url, \"%\" . _entity . \"%\") OR _m_hash=_entity OR _m_risk=_entity ) \n\
-| where _match=1 \n\
-| stats min(_time) as first_seen max(_time) as last_seen dc(rule_title) as detections values(rule_title) as rules sum(coalesce(risk_score,0)) as total_risk values(owner) as owners values(status) as statuses values(urgency) as urgencies by mc_incident_id \n\
-| eval first_seen=strftime(first_seen, \"%Y-%m-%d %H:%M:%S\"), last_seen=strftime(last_seen, \"%Y-%m-%d %H:%M:%S\") \n\
-| eval rules=mvjoin(mvlimit(rules,5), \", \"), owners=mvjoin(mvlimit(owners,5), \", \"), statuses=mvjoin(mvlimit(statuses,5), \", \"), urgencies=mvjoin(mvlimit(urgencies,5), \", \") \n\
-| sort - last_seen \n\
-| fields mc_incident_id last_seen first_seen detections total_risk rules owners statuses urgencies",
-        "queryParameters": {
-          "earliest": "$global_time.earliest$",
-          "latest": "$global_time.latest$"
-        },
-        "refresh": "onchange"
-      }
-    },
-    "ds_risk_timeline": {
-      "type": "ds.search",
-      "options": {
-        "query":
-"| from datamodel:\"Risk.All_Risk\" \n\
-| where lower('All_Risk.risk_object')=lower(\"$tok_entity$\") \n\
-| eval _score=coalesce('All_Risk.risk_score', 0) \n\
-| timechart span=1d sum(_score) as risk_score",
-        "queryParameters": {
-          "earliest": "$global_time.earliest$",
-          "latest": "$global_time.latest$"
-        },
-        "refresh": "onchange"
-      }
-    },
-    "ds_top_risk_rules": {
-      "type": "ds.search",
-      "options": {
-        "query":
-"| from datamodel:\"Risk.All_Risk\" \n\
-| where lower('All_Risk.risk_object')=lower(\"$tok_entity$\") \n\
-| stats count as events sum('All_Risk.risk_score') as risk by 'All_Risk.risk_rule' \n\
-| rename 'All_Risk.risk_rule' as rule \n\
-| sort - risk - events \n\
-| fields rule risk events",
-        "queryParameters": {
-          "earliest": "$global_time.earliest$",
-          "latest": "$global_time.latest$"
-        },
-        "refresh": "onchange"
-      }
-    },
-    "ds_risk_findings_fast": {
-      "type": "ds.search",
-      "options": {
-        "query":
-"| tstats summariesonly=t count as events sum(All_Risk.risk_score) as risk_score values(All_Risk.risk_message) as risk_message earliest(_time) as first_seen latest(_time) as last_seen from datamodel=Risk.All_Risk where All_Risk.risk_object=\"$tok_entity$\" by All_Risk.risk_rule All_Risk.risk_object All_Risk.risk_object_type All_Risk.annotations.mitre.attack.tactic All_Risk.annotations.mitre.attack.technique \n\
-| eval first_seen=strftime(first_seen, \"%Y-%m-%d %H:%M:%S\"), last_seen=strftime(last_seen, \"%Y-%m-%d %H:%M:%S\") \n\
-| rename \"All_Risk.risk_rule\" as rule, \"All_Risk.risk_object_type\" as obj_type, \"All_Risk.annotations.mitre.attack.tactic\" as tactic, \"All_Risk.annotations.mitre.attack.technique\" as technique \n\
-| sort - last_seen - risk_score \n\
-| fields last_seen first_seen rule risk_score events obj_type tactic technique",
-        "queryParameters": {
-          "earliest": "$global_time.earliest$",
-          "latest": "$global_time.latest$"
-        },
-        "refresh": "onchange"
-      }
-    }
-  },
+  "title": "Mission Control Entity Correlation (Studio)",
+  "description": "Correlate Mission Control cases and Risk data for any entity.",
   "inputs": {
     "in_time": {
       "type": "input.timerange",
@@ -165,13 +32,78 @@
       }
     }
   },
+  "dataSources": {
+    "ds_cases_from_notables": {
+      "type": "ds.search",
+      "options": {
+        "query": "index=notable mc_incident_id=* | eval _entity=lower(\"$tok_entity$\"), _etype=\"$tok_etype$\" | eval _m_user=lower(coalesce(user,src_user,dest_user,Account_Name,user_name)), _m_host=lower(coalesce(host,dest,dvc,dest_nt_host,src_nt_host)), _m_ip=coalesce(src,dest,src_ip,dest_ip), _m_mail=lower(coalesce(user_email,src_user_email,dest_user_email,recipient,sender)), _m_dom=lower(coalesce(url_domain,query,dest_dns,domain)), _m_url=lower(coalesce(url,uri,request)), _m_hash=lower(coalesce(file_hash,sha256,sha1,md5)), _m_risk=lower(risk_object) | eval _match=case(_etype=\"user\",_m_user=_entity,_etype=\"ip\",cidrmatch(_entity,_m_ip) OR _m_ip=_entity,_etype=\"host\",_m_host=_entity,_etype=\"email\",_m_mail=_entity,_etype=\"domain\",_m_dom=_entity,_etype=\"url\",like(_m_url,\"%\" . _entity . \"%\"),_etype=\"hash\",_m_hash=_entity,_etype=\"risk_object\",_m_risk=_entity,true(),_m_user=_entity OR _m_host=_entity OR _m_ip=_entity OR _m_mail=_entity OR _m_dom=_entity OR like(_m_url,\"%\" . _entity . \"%\") OR _m_hash=_entity OR _m_risk=_entity) | where _match=1 | stats min(_time) as first_seen max(_time) as last_seen dc(rule_title) as detections values(rule_title) as rules sum(coalesce(risk_score,0)) as total_risk values(owner) as owners values(status) as statuses values(urgency) as urgencies by mc_incident_id | eval first_seen=strftime(first_seen,\"%Y-%m-%d %H:%M:%S\"), last_seen=strftime(last_seen,\"%Y-%m-%d %H:%M:%S\") | eval rules=mvjoin(mvlimit(rules,5),\", \"), owners=mvjoin(mvlimit(owners,5),\", \"), statuses=mvjoin(mvlimit(statuses,5),\", \"), urgencies=mvjoin(mvlimit(urgencies,5),\", \") | sort - last_seen | fields mc_incident_id last_seen first_seen detections total_risk rules owners statuses urgencies",
+        "queryParameters": { "earliest": "$global_time.earliest$", "latest": "$global_time.latest$" },
+        "refresh": "onchange"
+      }
+    },
+    "ds_risk_timeline": {
+      "type": "ds.search",
+      "options": {
+        "query": "| from datamodel:\"Risk.All_Risk\" | where lower('All_Risk.risk_object')=lower(\"$tok_entity$\") | eval _score=coalesce('All_Risk.risk_score',0) | timechart span=1d sum(_score) as risk_score",
+        "queryParameters": { "earliest": "$global_time.earliest$", "latest": "$global_time.latest$" },
+        "refresh": "onchange"
+      }
+    },
+    "ds_top_risk_rules": {
+      "type": "ds.search",
+      "options": {
+        "query": "| from datamodel:\"Risk.All_Risk\" | where lower('All_Risk.risk_object')=lower(\"$tok_entity$\") | stats count as events sum('All_Risk.risk_score') as risk by 'All_Risk.risk_rule' | rename 'All_Risk.risk_rule' as rule | sort - risk - events | fields rule risk events",
+        "queryParameters": { "earliest": "$global_time.earliest$", "latest": "$global_time.latest$" },
+        "refresh": "onchange"
+      }
+    },
+    "ds_risk_findings_fast": {
+      "type": "ds.search",
+      "options": {
+        "query": "| tstats summariesonly=t count as events sum(All_Risk.risk_score) as risk_score values(All_Risk.risk_message) as risk_message earliest(_time) as first_seen latest(_time) as last_seen from datamodel=Risk.All_Risk where All_Risk.risk_object=\"$tok_entity$\" by All_Risk.risk_rule All_Risk.risk_object All_Risk.risk_object_type All_Risk.annotations.mitre.attack.tactic All_Risk.annotations.mitre.attack.technique | eval first_seen=strftime(first_seen,\"%Y-%m-%d %H:%M:%S\"), last_seen=strftime(last_seen,\"%Y-%m-%d %H:%M:%S\") | rename \"All_Risk.risk_rule\" as rule, \"All_Risk.risk_object_type\" as obj_type, \"All_Risk.annotations.mitre.attack.tactic\" as tactic, \"All_Risk.annotations.mitre.attack.technique\" as technique | sort - last_seen - risk_score | fields last_seen first_seen rule risk_score events obj_type tactic technique",
+        "queryParameters": { "earliest": "$global_time.earliest$", "latest": "$global_time.latest$" },
+        "refresh": "onchange"
+      }
+    }
+  },
+  "visualizations": {
+    "viz_cases_table": {
+      "type": "splunk.table",
+      "title": "Mission Control Cases Related to Entity",
+      "dataSources": { "primary": "ds_cases_from_notables" },
+      "options": { "count": 20, "wrap": true },
+      "eventHandlers": [
+        { "type": "drilldown.customUrl", "options": { "url": "/app/mission-control/incidents/$row.mc_incident_id.value$", "target": "blank" } }
+      ]
+    },
+    "viz_risk_timeline": {
+      "type": "splunk.area",
+      "title": "Risk Timeline for Entity",
+      "dataSources": { "primary": "ds_risk_timeline" }
+    },
+    "viz_top_rules": {
+      "type": "splunk.table",
+      "title": "Top Risk Rules for Entity",
+      "dataSources": { "primary": "ds_top_risk_rules" },
+      "options": { "count": 10 }
+    },
+    "viz_risk_findings": {
+      "type": "splunk.table",
+      "title": "Accelerated Risk Findings (MITRE Context)",
+      "dataSources": { "primary": "ds_risk_findings_fast" },
+      "options": { "count": 20, "wrap": true },
+      "eventHandlers": [
+        { "type": "drilldown.customUrl", "options": { "url": "/app/search/search?q=%7Ctstats%20summariesonly%3Df%20from%20datamodel%3DRisk.All_Risk%20where%20All_Risk.risk_object%3D%22$tok_entity$%22%20by%20All_Risk%2A&earliest=$global_time.earliest$&latest=$global_time.latest$", "target": "blank" } }
+      ]
+    }
+  },
   "layout": {
     "type": "grid",
     "options": { "width": 1440, "height": 1100, "col": 12, "rowHeight": 60, "gap": 10 },
     "structure": [
       { "item": "in_entity", "type": "input", "position": { "x": 0, "y": 0, "w": 5, "h": 1 } },
-      { "item": "in_etype",  "type": "input", "position": { "x": 5, "y": 0, "w": 3, "h": 1 } },
-      { "item": "in_time",   "type": "input", "position": { "x": 8, "y": 0, "w": 4, "h": 1 } },
+      { "item": "in_etype", "type": "input", "position": { "x": 5, "y": 0, "w": 3, "h": 1 } },
+      { "item": "in_time", "type": "input", "position": { "x": 8, "y": 0, "w": 4, "h": 1 } },
       { "item": "viz_cases_table", "type": "visualization", "position": { "x": 0, "y": 1, "w": 12, "h": 6 } },
       { "item": "viz_risk_timeline", "type": "visualization", "position": { "x": 0, "y": 7, "w": 7, "h": 4 } },
       { "item": "viz_top_rules", "type": "visualization", "position": { "x": 7, "y": 7, "w": 5, "h": 4 } },
@@ -181,10 +113,7 @@
   "defaults": {
     "dataSources": {
       "ds.search": {
-        "queryParameters": {
-          "earliest": "$global_time.earliest$",
-          "latest": "$global_time.latest$"
-        }
+        "queryParameters": { "earliest": "$global_time.earliest$", "latest": "$global_time.latest$" }
       }
     }
   }
