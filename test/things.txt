@@ -1,4 +1,81 @@
 index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
+| spath input=_raw path=geo.asn output=asn
+| spath input=_raw path=httpMessage.host output=host
+| spath input=_raw path=attackData.clientIP output=src_ip
+| spath input=_raw path=attackData.rules{}.id output=rule_ids
+| spath input=_raw path=attackData.rules{}.tag output=tags
+| where match(asn,"^\d+$")
+| bin _time span=30s
+| stats count as bucket_requests
+        dc(src_ip) as bucket_unique_ips
+        values(host) as bucket_hosts
+        values(tags) as bucket_tags
+        values(rule_ids) as bucket_rule_ids
+    by asn _time
+| eval bucket_rps=round(bucket_requests/30,0)
+| sort 0 asn _time
+| streamstats current=f window=1 last(_time) as prev_time by asn
+| eval gap=_time - prev_time
+| eval new_session=if(isnull(prev_time) OR gap>600,1,0)
+| streamstats sum(new_session) as session_id by asn
+| stats min(_time) as start
+        max(_time) as stop
+        sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        sum(bucket_unique_ips) as unique_ips_est
+        values(bucket_hosts) as hosts
+        values(bucket_tags) as tags_mv
+        values(bucket_rule_ids) as rules_mv
+    by asn session_id
+| eval duration_sec=stop - start + 30
+| eval session_min=round(duration_sec/60,0)
+| stats sum(total_requests) as total_requests_all
+        max(peak_rps) as max_peak_rps
+        sum(duration_sec) as active_sec
+        count as sessions
+        sum(unique_ips_est) as unique_ips_est
+        values(hosts) as all_hosts
+        values(tags_mv) as all_tags
+        values(rules_mv) as all_rules
+        min(start) as first_seen
+        max(stop) as last_seen
+    by asn
+| eval active_min=round(active_sec/60,0)
+| eval span_min=round((last_seen - first_seen)/60,0)
+| eval overall_rps=if(active_sec>0,round(total_requests_all/active_sec,0),0)
+| eval host_mv=mvdedup(all_hosts)
+| eval unique_targets=mvcount(host_mv)
+| eval primary_targets=if(unique_targets>3,
+                          mvjoin(mvindex(host_mv,0,2), ", ") . " (+" . tostring(unique_targets-3,"commas") . " more)",
+                          mvjoin(host_mv,", "))
+| eval rule_id_count=mvcount(mvdedup(all_rules))
+| eval tag_count=mvcount(mvdedup(all_tags))
+| eval first_str=strftime(first_seen,"%Y-%m-%d %H:%M:%S UTC")
+| eval last_str=strftime(last_seen,"%Y-%m-%d %H:%M:%S UTC")
+| eval total_requests_fmt=tostring(total_requests_all,"commas")
+| eval max_peak_rps_fmt=tostring(max_peak_rps,"commas")
+| eval overall_rps_fmt=tostring(overall_rps,"commas")
+| where max_peak_rps>=5 OR total_requests_all>=500
+| sort - max_peak_rps
+| table asn first_str last_str span_min active_min sessions max_peak_rps_fmt overall_rps_fmt total_requests_fmt unique_ips_est unique_targets primary_targets rule_id_count tag_count
+| rename asn as "ASN"
+        first_str as "First Seen"
+        last_str as "Last Seen"
+        span_min as "Span (min)"
+        active_min as "Active (min)"
+        sessions as "Sessions"
+        max_peak_rps_fmt as "Max Peak RPS"
+        overall_rps_fmt as "Overall RPS"
+        total_requests_fmt as "Total Requests"
+        unique_ips_est as "Unique IPs (est)"
+        unique_targets as "Unique Targets"
+        primary_targets as "Primary Targets"
+        rule_id_count as "Rule IDs (count)"
+        tag_count as "Tags (count)"
+
+
+
+index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
 | where isnotnull(geo.asn) AND geo.asn!="" AND lower(geo.asn)!="unknown"
   AND isnotnull(httpMessage.host) AND httpMessage.host!="" AND lower(httpMessage.host)!="unknown"
 | bin _time span=30s
