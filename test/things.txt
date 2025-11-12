@@ -1039,3 +1039,82 @@ index=akami earliest=-14d@d latest=now
         countries_summary as "Countries",
         host_summary as "Primary Targets",
         attack_summary as "Attack Types"
+
+
+
+index=akami
+| rex field=attackData.rules{}.message "(?<attack_type>^[^(|]+)"
+| eval attack_type=trim(attack_type)
+| bin _time span=30s
+| stats count as bucket_requests
+        values(attackData.clientIP) as bucket_ips
+        values(httpMessage.host) as bucket_hosts
+        values(geo.country) as bucket_countries
+        values(attack_type) as bucket_attack_types
+    by geo.asn, _time
+| eval bucket_rps=round(bucket_requests/30, 2)
+| where bucket_rps >= 1000
+| sort 0 geo.asn, _time
+| streamstats current=f window=1 last(_time) as prev_time by geo.asn
+| eval gap=_time - prev_time
+| eval new_session=if(isnull(prev_time) OR gap > 300, 1, 0)
+| streamstats sum(new_session) as session_id by geo.asn
+| stats sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        avg(bucket_rps) as avg_rps
+        values(bucket_ips) as ips
+        values(bucket_hosts) as hosts
+        values(bucket_countries) as countries
+        values(bucket_attack_types) as attack_types
+        min(_time) as session_start
+        max(_time) as session_end
+    by geo.asn, session_id
+| eval duration_sec = session_end - session_start + 30
+| eval avg_rps_session = round(total_requests / duration_sec, 2)
+| eval unique_ips = mvcount(mvdedup(ips))
+| eval unique_targets = mvcount(mvdedup(hosts))
+| eval severity = case(
+        peak_rps >= 100000, "CRITICAL",
+        peak_rps >= 10000,  "HIGH",
+        peak_rps >= 1000,   "MEDIUM",
+        1=1,                "LOW"
+    )
+| eval session_start_str = strftime(session_start, "%Y-%m-%d %H:%M:%S UTC")
+| eval session_end_str = strftime(session_end, "%Y-%m-%d %H:%M:%S UTC")
+| eval duration_min = round(duration_sec / 60, 2)
+| eval total_requests_fmt = tostring(total_requests, "commas")
+| eval peak_rps_fmt = tostring(peak_rps, "commas")
+| eval avg_rps_fmt = tostring(avg_rps_session, "commas")
+| eval countries_summary = if(
+        mvcount(countries) > 4,
+        mvjoin(mvindex(countries, 0, 3), ", ") . " (+" . tostring(mvcount(countries) - 4, "commas") . " more)",
+        mvjoin(countries, ", ")
+    )
+| eval host_mv = mvdedup(hosts)
+| eval host_summary = if(
+        unique_targets > 2,
+        mvindex(host_mv, 0) . ", " . mvindex(host_mv, 1) . " (+" . tostring(unique_targets - 2, "commas") . " more)",
+        mvjoin(host_mv, ", ")
+    )
+| eval attack_type_list = mvsort(mvdedup(attack_types))
+| eval attack_summary = if(
+        mvcount(attack_type_list) > 5,
+        mvjoin(mvindex(attack_type_list, 0, 4), "; ") . "; (+" . tostring(mvcount(attack_type_list) - 5, "commas") . " more)",
+        mvjoin(attack_type_list, "; ")
+    )
+| sort - peak_rps
+| table geo.asn, session_start_str, session_end_str, duration_min, peak_rps_fmt, avg_rps_fmt, severity, total_requests_fmt, unique_ips, unique_targets, countries_summary, host_summary, attack_summary
+| rename 
+        geo.asn as "ASN",
+        session_start_str as "Attack Start",
+        session_end_str as "Attack End",
+        duration_min as "Duration (min)",
+        peak_rps_fmt as "Peak RPS (30s)",
+        avg_rps_fmt as "Avg RPS (session)",
+        severity as "Severity",
+        total_requests_fmt as "Total Requests",
+        unique_ips as "Unique IPs",
+        unique_targets as "Unique Targets",
+        countries_summary as "Countries",
+        host_summary as "Primary Targets",
+        attack_summary as "Attack Types"
