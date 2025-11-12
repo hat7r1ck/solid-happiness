@@ -1188,3 +1188,73 @@ index=akami
     unique_targets     as "Unique Targets",
     countries_summary  as "Countries",
     attack_summary     as "Attack Types"
+
+
+
+index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI
+| bin _time span=30s
+| stats count as bucket_requests
+        dc(attackData.clientIP) as bucket_unique_ips
+        values(httpMessage.host) as bucket_hosts
+        values(geo.country) as bucket_countries
+        values(attackData.rules{}.tag) as bucket_tags
+        values(attackData.rules{}.id) as bucket_rule_ids
+        values(attackData.rules{}.action) as bucket_actions
+        values(attackData.rules{}.data) as bucket_rule_data
+        values(identity.tlsFingerprintV3) as bucket_tlsfp
+    by geo.asn, httpMessage.host, _time
+| eval bucket_rps=round(bucket_requests/30, 2)
+| eventstats p95(bucket_rps) as host_p95 by httpMessage.host
+| eval hot=if(bucket_rps>=1000 OR bucket_rps>=host_p95*3, 1, 0)
+| where hot=1
+| sort 0 geo.asn, httpMessage.host, _time
+| streamstats current=f window=1 last(_time) as prev_time by geo.asn, httpMessage.host
+| eval gap=_time - prev_time
+| eval new_session=if(isnull(prev_time) OR gap>300, 1, 0)
+| streamstats sum(new_session) as session_id by geo.asn, httpMessage.host
+| stats sum(bucket_requests) as total_requests
+        max(bucket_rps) as peak_rps
+        avg(bucket_rps) as avg_rps
+        max(bucket_unique_ips) as unique_ips
+        values(bucket_tlsfp) as tlsfp
+        dc(bucket_tlsfp) as tls_fp_count
+        values(bucket_countries) as countries
+        values(bucket_tags) as tags
+        values(bucket_actions) as actions
+        values(bucket_rule_ids) as rule_ids
+        min(_time) as start
+        max(_time) as stop
+    by geo.asn, httpMessage.host, session_id
+| eval duration_sec=stop - start + 30
+| eval avg_rps_session=round(total_requests/duration_sec, 2)
+| eval severity=case(peak_rps>=100000, "CRITICAL", peak_rps>=10000, "HIGH", peak_rps>=1000, "MEDIUM", peak_rps>=100, "LOW", 1=1, "NORMAL")
+| eval start_str=strftime(start, "%Y-%m-%d %H:%M:%S UTC")
+| eval stop_str=strftime(stop, "%Y-%m-%d %H:%M:%S UTC")
+| eval duration_min=round(duration_sec/60, 1)
+| eval total_requests_fmt=tostring(total_requests, "commas")
+| eval peak_rps_fmt=tostring(peak_rps, "commas")
+| eval avg_rps_fmt=tostring(avg_rps_session, "commas")
+| eval countries_summary=if(mvcount(countries)>4, mvjoin(mvindex(countries,0,3), ", ") . " (+" . tostring(mvcount(countries)-4, "commas") . " more)", mvjoin(countries, ", "))
+| eval tags_list=mvsort(mvdedup(tags))
+| eval tags_summary=if(mvcount(tags_list)>5, mvjoin(mvindex(tags_list,0,4), "; ") . "; (+" . tostring(mvcount(tags_list)-5, "commas") . " more)", mvjoin(tags_list, "; "))
+| eval actions_summary=mvjoin(mvsort(mvdedup(actions)), "; ")
+| eval rules_list=mvsort(mvdedup(rule_ids))
+| eval rules_summary=if(mvcount(rules_list)>5, mvjoin(mvindex(rules_list,0,4), "; ") . "; (+" . tostring(mvcount(rules_list)-5, "commas") . " more)", mvjoin(rules_list, "; "))
+| where peak_rps>=100 OR total_requests>=10000
+| sort - peak_rps
+| table geo.asn, httpMessage.host, start_str, stop_str, duration_min, peak_rps_fmt, avg_rps_fmt, severity, total_requests_fmt, unique_ips, tls_fp_count, countries_summary, tags_summary, actions_summary, rules_summary
+| rename geo.asn as "ASN",
+        httpMessage.host as "Target Host",
+        start_str as "Start",
+        stop_str as "End",
+        duration_min as "Duration (min)",
+        peak_rps_fmt as "Peak RPS",
+        avg_rps_fmt as "Avg RPS",
+        severity as "Severity",
+        total_requests_fmt as "Total Requests",
+        unique_ips as "Unique IPs",
+        tls_fp_count as "TLS FP Count",
+        countries_summary as "Countries",
+        tags_summary as "Tags",
+        actions_summary as "Actions",
+        rules_summary as "Rule IDs"
