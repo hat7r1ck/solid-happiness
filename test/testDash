@@ -1,6 +1,6 @@
 {
   "title": "Mission Control Entity Correlation (Studio)",
-  "description": "Correlate Mission Control cases and ES Risk data for a given entity.",
+  "description": "Correlate Mission Control cases and ES Risk data for any entity.",
   "inputs": {
     "in_time": {
       "type": "input.timerange",
@@ -89,23 +89,10 @@
     },
     "viz_risk_findings": {
       "type": "splunk.table",
-      "title": "Accelerated Risk Findings, MITRE Context",
+      "title": "Accelerated Risk Findings (MITRE Context)",
       "dataSources": { "primary": "ds_risk_findings_fast" },
-      "options": { "count": 20, "wrap": true },
-      "eventHandlers": [
-        { "type": "drilldown.customUrl", "options": { "url": "/app/search/search?q=%7Ctstats%20summariesonly%3Df%20from%20datamodel%3DRisk.All_Risk%20where%20All_Risk.risk_object%3D%22$tok_entity$%22%20by%20All_Risk%2A&earliest=$global_time.earliest$&latest=$global_time.latest$", "target": "blank" } }
-      ]
+      "options": { "count": 20, "wrap": true }
     }
-  },
-  "layout": {
-    "tabs": [
-      {
-        "title": "Main",
-        "id": "tab1",
-        "active": true,
-        "layoutDefinitionId": "grid_main"
-      }
-    ]
   },
   "layoutDefinitions": {
     "grid_main": {
@@ -121,6 +108,16 @@
         { "item": "viz_risk_findings", "type": "visualization", "position": { "x": 0, "y": 11, "w": 12, "h": 5 } }
       ]
     }
+  },
+  "layout": {
+    "tabs": [
+      {
+        "title": "Main",
+        "id": "tab1",
+        "active": true,
+        "layoutDefinitionId": "grid_main"
+      }
+    ]
   },
   "defaults": {
     "dataSources": {
