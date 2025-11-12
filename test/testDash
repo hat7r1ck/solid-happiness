@@ -1,6 +1,6 @@
 {
   "title": "Mission Control Entity Correlation (Studio)",
-  "description": "Correlate Mission Control cases and Risk data for any entity.",
+  "description": "Correlate Mission Control cases and Risk data for any entity in Splunk Cloud Studio.",
   "inputs": {
     "in_time": {
       "type": "input.timerange",
@@ -98,16 +98,25 @@
     }
   },
   "layout": {
-    "type": "grid",
-    "options": { "width": 1440, "height": 1100, "col": 12, "rowHeight": 60, "gap": 10 },
-    "structure": [
-      { "item": "in_entity", "type": "input", "position": { "x": 0, "y": 0, "w": 5, "h": 1 } },
-      { "item": "in_etype", "type": "input", "position": { "x": 5, "y": 0, "w": 3, "h": 1 } },
-      { "item": "in_time", "type": "input", "position": { "x": 8, "y": 0, "w": 4, "h": 1 } },
-      { "item": "viz_cases_table", "type": "visualization", "position": { "x": 0, "y": 1, "w": 12, "h": 6 } },
-      { "item": "viz_risk_timeline", "type": "visualization", "position": { "x": 0, "y": 7, "w": 7, "h": 4 } },
-      { "item": "viz_top_rules", "type": "visualization", "position": { "x": 7, "y": 7, "w": 5, "h": 4 } },
-      { "item": "viz_risk_findings", "type": "visualization", "position": { "x": 0, "y": 11, "w": 12, "h": 5 } }
+    "tabs": [
+      {
+        "title": "Main",
+        "id": "tab1",
+        "active": true,
+        "layout": {
+          "type": "grid",
+          "options": { "width": 1440, "height": 1100, "col": 12, "rowHeight": 60, "gap": 10 },
+          "structure": [
+            { "item": "in_entity", "type": "input", "position": { "x": 0, "y": 0, "w": 5, "h": 1 } },
+            { "item": "in_etype", "type": "input", "position": { "x": 5, "y": 0, "w": 3, "h": 1 } },
+            { "item": "in_time", "type": "input", "position": { "x": 8, "y": 0, "w": 4, "h": 1 } },
+            { "item": "viz_cases_table", "type": "visualization", "position": { "x": 0, "y": 1, "w": 12, "h": 6 } },
+            { "item": "viz_risk_timeline", "type": "visualization", "position": { "x": 0, "y": 7, "w": 7, "h": 4 } },
+            { "item": "viz_top_rules", "type": "visualization", "position": { "x": 7, "y": 7, "w": 5, "h": 4 } },
+            { "item": "viz_risk_findings", "type": "visualization", "position": { "x": 0, "y": 11, "w": 12, "h": 5 } }
+          ]
+        }
+      }
     ]
   },
   "defaults": {
