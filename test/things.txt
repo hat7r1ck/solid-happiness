@@ -10,6 +10,69 @@ index=notable mc_incident_id=*
 | eval _m_risk=lower(risk_object)
 
 | eval _match = case(
+    _etype=="user"        AND _m_user=_entity, 1,
+    _etype=="ip"          AND (cidrmatch(_entity,_m_ip) OR _m_ip=_entity), 1,
+    _etype=="host"        AND _m_host=_entity, 1,
+    _etype=="email"       AND _m_mail=_entity, 1,
+    _etype=="domain"      AND _m_dom=_entity, 1,
+    _etype=="url"         AND like(_m_url, "%" + _entity + "%"), 1,
+    _etype=="hash"        AND _m_hash=_entity, 1,
+    _etype=="risk_object" AND _m_risk=_entity, 1,
+    _etype=="auto" AND (
+        _m_user=_entity OR
+        _m_host=_entity OR
+        _m_ip=_entity OR
+        _m_mail=_entity OR
+        _m_dom=_entity OR
+        like(_m_url, "%" + _entity + "%") OR
+        _m_hash=_entity OR
+        _m_risk=_entity
+    ), 1,
+    true(), 0
+)
+
+| where _match=1
+
+| stats min(_time) as first_seen
+        max(_time) as last_seen
+        dc(rule_title) as detections
+        values(rule_title) as rules
+        sum(coalesce(risk_score,0)) as total_risk
+        values(owner) as owners
+        values(status) as statuses
+        values(urgency) as urgencies
+        values(mc_incident_id) as mc_ids
+        by risk_object
+
+| eval first_seen=strftime(first_seen,"%Y-%m-%d %H:%M:%S")
+| eval last_seen=strftime(last_seen,"%Y-%m-%d %H:%M:%S")
+
+| eval rules=mvjoin(head(mvsort(rules),5), ", ")
+| eval owners=mvjoin(head(mvsort(owners),5), ", ")
+| eval statuses=mvjoin(head(mvsort(statuses),5), ", ")
+| eval urgencies=mvjoin(head(mvsort(urgencies),5), ", ")
+| eval mc_ids=mvjoin(head(mvsort(mc_ids),5), ", ")
+
+| sort - last_seen
+| rename risk_object as "Risk Object",
+         mc_ids as "MC Incident IDs",
+         total_risk as "Total Risk",
+         detections as "Detection Count"
+| fields last_seen first_seen "Risk Object" "MC Incident IDs" "Detection Count" "Total Risk" rules owners statuses urgencies
+
+
+index=notable mc_incident_id=*
+| eval _entity=lower("$tok_entity$"), _etype="$tok_etype$"
+| eval _m_user=lower(coalesce(user, src_user, dest_user, Account_Name, user_name, identity))
+| eval _m_host=lower(coalesce(host, dest, dvc, dest_nt_host, src_nt_host))
+| eval _m_ip=coalesce(src, dest, src_ip, dest_ip)
+| eval _m_mail=lower(coalesce(user_email, src_user_email, dest_user_email, recipient, sender))
+| eval _m_dom=lower(coalesce(url_domain, query, dest_dns, domain))
+| eval _m_url=lower(coalesce(url, uri, request))
+| eval _m_hash=lower(coalesce(file_hash, sha256, sha1, md5))
+| eval _m_risk=lower(risk_object)
+
+| eval _match = case(
     _etype="user"       AND _m_user=_entity, 1,
     _etype="ip"         AND (cidrmatch(_entity,_m_ip) OR _m_ip=_entity), 1,
     _etype="host"       AND _m_host=_entity, 1,
