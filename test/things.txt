@@ -1,3 +1,52 @@
+index=notable mc_incident_id=*
+| eval _entity=lower("$tok_entity$"), _etype="$tok_etype$"
+| eval _m_user=lower(coalesce(user, src_user, dest_user, Account_Name, user_name, identity))
+| eval _m_host=lower(coalesce(host, dest, dvc, dest_nt_host, src_nt_host))
+| eval _m_ip=coalesce(src, dest, src_ip, dest_ip)
+| eval _m_mail=lower(coalesce(user_email, src_user_email, dest_user_email, recipient, sender))
+| eval _m_dom=lower(coalesce(url_domain, query, dest_dns, domain))
+| eval _m_url=lower(coalesce(url, uri, request))
+| eval _m_hash=lower(coalesce(file_hash, sha256, sha1, md5))
+| eval _m_risk=lower(risk_object)
+| eval _match=case(
+    _etype="user", _m_user=_entity,
+    _etype="ip", cidrmatch(_entity, _m_ip) OR _m_ip=_entity,
+    _etype="host", _m_host=_entity,
+    _etype="email", _m_mail=_entity,
+    _etype="domain", _m_dom=_entity,
+    _etype="url", like(_m_url, "%" . _entity . "%"),
+    _etype="hash", _m_hash=_entity,
+    _etype="risk_object", _m_risk=_entity,
+    true(), _m_user=_entity OR _m_host=_entity OR _m_ip=_entity OR _m_mail=_entity OR _m_dom=_entity OR like(_m_url, "%" . _entity . "%") OR _m_hash=_entity OR _m_risk=_entity
+)
+| where _match=1
+| stats min(_time) as first_seen
+        max(_time) as last_seen
+        dc(rule_title) as detections
+        values(rule_title) as rules
+        sum(coalesce(risk_score,0)) as total_risk
+        values(owner) as owners
+        values(status) as statuses
+        values(urgency) as urgencies
+        values(mc_incident_id) as mc_ids
+        by risk_object
+| eval first_seen=strftime(first_seen,"%Y-%m-%d %H:%M:%S"),
+       last_seen=strftime(last_seen,"%Y-%m-%d %H:%M:%S")
+| eval rules=mvjoin(mvlimit(rules,5), ", "),
+       owners=mvjoin(mvlimit(owners,5), ", "),
+       statuses=mvjoin(mvlimit(statuses,5), ", "),
+       urgencies=mvjoin(mvlimit(urgencies,5), ", "),
+       mc_ids=mvjoin(mvlimit(mc_ids,5), ", ")
+| sort - last_seen
+| rename risk_object as "Risk Object",
+         mc_ids as "MC Incident IDs",
+         total_risk as "Total Risk",
+         detections as "Detection Count"
+| fields last_seen first_seen "Risk Object" "MC Incident IDs" "Detection Count" "Total Risk" rules owners statuses urgencies
+
+
+
+
 index=network_long sourcetype=akamai:apikona:json wf_id=AKAMAI earliest=-14d@d latest=now
 | where isnotnull(geo.asn) AND isnotnull(httpMessage.host) AND match(geo.asn,"^\d+$")
 | bin _time span=30s
