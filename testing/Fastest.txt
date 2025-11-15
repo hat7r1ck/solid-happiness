@@ -1,4 +1,30 @@
 base 
+| eval user_hit = if(isnotnull(_m_user) AND _m_user == _entity, 1, 0)
+| eval host_hit = if(isnotnull(_m_host) AND _m_host == _entity, 1, 0)
+| eval ip_hit   = if(isnotnull(_m_ip)   AND _m_ip   == _entity, 1, 0)
+| eval mail_hit = if(isnotnull(_m_mail) AND _m_mail == _entity, 1, 0)
+| eval dom_hit  = if(isnotnull(_m_dom)  AND _m_dom  == _entity, 1, 0)
+| eval url_hit  = if(isnotnull(_m_url)  AND like(_m_url, "%" + _entity + "%"), 1, 0)
+| eval hash_hit = if(isnotnull(_m_hash) AND _m_hash == _entity, 1, 0)
+| eval risk_hit = if(isnotnull(_m_risk) AND _m_risk == _entity, 1, 0)
+
+| stats
+    sum(user_hit) as user_hits,
+    sum(host_hit) as host_hits,
+    sum(ip_hit)   as ip_hits,
+    sum(mail_hit) as mail_hits,
+    sum(dom_hit)  as dom_hits,
+    sum(url_hit)  as url_hits,
+    sum(hash_hit) as hash_hits,
+    sum(risk_hit) as risk_hits
+
+| transpose 0 column_name="hits" header_field="field"
+| where hits > 0
+| eval field = replace(field, "_hits$", "")
+
+
+
+
 | eval _m_user = lower(coalesce(
     user,
     src_user,
