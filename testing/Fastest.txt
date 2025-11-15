@@ -1,3 +1,50 @@
+| where isnotnull(_m_user) AND _m_user != ""
+| stats
+    dc(_m_host) as host_count
+    dc(_m_ip)   as ip_count
+    values(_m_host) as hosts
+    values(_m_ip)   as ips
+    values(rule_title) as rules
+    by _m_user
+
+| eval hosts = mvjoin(mvindex(mvsort(hosts),0,4), ", ")
+| eval ips   = mvjoin(mvindex(mvsort(ips),0,4), ", ")
+| eval rules = mvjoin(mvindex(mvsort(rules),0,4), ", ")
+
+| sort -host_count -ip_count
+
+| rename _m_user as "User",
+         host_count as "Distinct Hosts",
+         ip_count   as "Distinct IPs"
+
+| fields "User" "Distinct Hosts" "Distinct IPs" hosts ips rules
+
+
+
+| where isnotnull(_m_host) AND _m_host != ""
+| stats
+    dc(_m_user) as user_count
+    dc(_m_ip)   as ip_count
+    values(_m_user) as users
+    values(_m_ip)   as ips
+    values(rule_title) as rules
+    by _m_host
+
+| eval users = mvjoin(mvindex(mvsort(users),0,4), ", ")
+| eval ips   = mvjoin(mvindex(mvsort(ips),0,4), ", ")
+| eval rules = mvjoin(mvindex(mvsort(rules),0,4), ", ")
+
+| sort -user_count -ip_count
+
+| rename _m_host as "Host",
+         user_count as "Distinct Users",
+         ip_count   as "Distinct IPs"
+
+| fields "Host" "Distinct Users" "Distinct IPs" users ips rules
+
+
+
+
 | eval _m_user = lower(coalesce(
     user,
     src_user,
