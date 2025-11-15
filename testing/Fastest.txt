@@ -1,85 +1,49 @@
-
-notable
-| eval _entity = trim(lower("$tok_entity$"))
-| where len(_entity)>0
-
-| eval _m_user = lower(coalesce(user, src_user, dest_user, identity, user_name, user_normalized))
-| eval _m_host = lower(coalesce(host, hostname, dest, dvc, dest_nt_host, src_nt_host, ComputerName))
-| eval _m_ip   = coalesce(src, src_ip, dest, dest_ip, dvc_ip)
-| eval _m_mail = lower(coalesce(user_email, src_user_email, dest_user_email, recipient, sender))
-| eval _m_dom  = lower(coalesce(url_domain, dest_dns, domain, query))
-| eval _m_url  = lower(coalesce(url, uri, request))
-| eval _m_hash = lower(coalesce(file_hash, sha256, sha1, md5))
-| eval _m_risk = lower(risk_object)
-
-| eval _is_ip_entity = if(match(_entity, "^(\\d{1,3}\\.){3}\\d{1,3}(\\/\\d{1,2})?$"), 1, 0)
-
-| eval hit = if(
-      _m_user=_entity OR
-      _m_host=_entity OR
-      _m_ip=_entity OR
-      _m_mail=_entity OR
-      _m_dom=_entity OR
-      like(_m_url,"%"+_entity+"%") OR
-      _m_hash=_entity OR
-      _m_risk=_entity OR
-      (_is_ip_entity=1 AND cidrmatch(_entity,tostring(_m_ip))),
-      1,0)
-
-| where hit=1
-
 | stats 
-      min(_time) as first_seen
-      max(_time) as last_seen
-      count as detection_count
-      values(risk_object) as risk_object
-      sum(risk_score) as total_risk
-      values(owner) as owners
-      values(status_label) as statuses
-      values(urgency) as urgencies
+    min(_time) as first_seen
+    max(_time) as last_seen
+    dc(rule_title) as detection_count
+    values(coalesce(mc_incident_id, source_guid, orig_sid)) as mc_ids
+    values(coalesce(risk_message, rule_title, search_name)) as rules
+    values(owner) as owners
+    values(status_label) as statuses
+    values(urgency) as urgencies
+    values(risk_score) as risk_scores
 
-| eval first_seen=strftime(first_seen,"%Y-%m-%d %H:%M:%S")
-| eval last_seen=strftime(last_seen,"%Y-%m-%d %H:%M:%S")
+| eval first_seen = strftime(first_seen, "%Y-%m-%d %H:%M:%S")
+| eval last_seen  = strftime(last_seen, "%Y-%m-%d %H:%M:%S")
 
-This exactly mirrors the block you had, plus the fields you said you need.
+| rename 
+    detection_count as "Detection Count",
+    mc_ids as "MC Incident IDs",
+    rules as "Rules",
+    owners as "Owners",
+    statuses as "Statuses",
+    urgencies as "Urgency",
+    risk_scores as "Risk Scores",
+    first_seen as "First Seen",
+    last_seen as "Last Seen"
 
-⸻
+| fields "Last Seen" "First Seen" "Detection Count" "Rules" "Owners" "Statuses" "Urgency" "Risk Scores" "MC Incident IDs"
 
-notable
-| eval _entity = trim(lower("$tok_entity$"))
-| where len(_entity)>0
 
-| eval _m_user = lower(coalesce(user, src_user, dest_user, identity, user_name, user_normalized))
-| eval _m_host = lower(coalesce(host, hostname, dest, dvc, dest_nt_host, src_nt_host, ComputerName))
-| eval _m_ip   = coalesce(src, src_ip, dest, dest_ip, dvc_ip)
-| eval _m_mail = lower(coalesce(user_email, src_user_email, dest_user_email, recipient, sender))
-| eval _m_dom  = lower(coalesce(url_domain, dest_dns, domain, query))
-| eval _m_url  = lower(coalesce(url, uri, request))
-| eval _m_hash = lower(coalesce(file_hash, sha256, sha1, md5))
-| eval _m_risk = lower(risk_object)
 
-| eval _is_ip_entity = if(match(_entity,"^(\\d{1,3}\\.){3}\\d{1,3}(\\/\\d{1,2})?$"),1,0)
-
-| eval hit = if(
-      _m_user=_entity OR
-      _m_host=_entity OR
-      _m_ip=_entity OR
-      _m_mail=_entity OR
-      _m_dom=_entity OR
-      like(_m_url,"%"+_entity+"%") OR
-      _m_hash=_entity OR
-      _m_risk=_entity OR
-      (_is_ip_entity=1 AND cidrmatch(_entity,tostring(_m_ip))),
-      1,0)
-
-| where hit=1
-
-| eval detection_time=_time
+| eval detection_time = _time
 | eval rule_name = coalesce(risk_message, rule_title, search_name)
 | eval rule_description = description
 
-| table detection_time owner status_label urgency source_guid rule_name rule_description risk_object disposition
+| table detection_time rule_name rule_description source_guid owner status_label urgency
 
-| eval detection_time=strftime(detection_time,"%Y-%m-%d %H:%M:%S")
+| eval detection_time = strftime(detection_time, "%Y-%m-%d %H:%M:%S")
+
 | sort - detection_time
 
+| rename
+    detection_time as "Detection Time",
+    owner as "Owner",
+    status_label as "Status",
+    urgency as "Urgency",
+    source_guid as "MC Incident ID",
+    rule_name as "Rule",
+    rule_description as "Rule Description"
+
+| fields "Detection Time" "Owner" "Status" "Urgency" "MC Incident ID" "Rule" "Rule Description"
