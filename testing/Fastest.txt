@@ -207,20 +207,30 @@ Use four input fields:
 2. SPL powered “Regex Generator” panel
 
 | makeresults
-| eval host="$tok_lb_host$",
-      ip="$tok_lb_ip$",
-      cloud="$tok_lb_cloud$",
-      user="$tok_lb_user$"
-| eval parts = mvappend(
-        if(len(host)>0, host, null()),
-        if(len(ip)>0, ip, null()),
-        if(len(cloud)>0, cloud, null()),
-        if(len(user)>0, user, null())
-      )
-| mvexpand parts
-| eval built = replace(parts, "([A-Za-z])", "[\\1\\U\\1]")
-| eval built = replace(built, "\\.", "\\.")
-| eval final = "(" . mvjoin(built, "|") . ")"
-| stats values(final) as regex
-| eval regex = "/.*".regex.".*/"
-| table regex
+| eval raw_host=trim(lower("$tok_lb_host$")),
+       raw_ip=trim(lower("$tok_lb_ip$")),
+       raw_cloud=trim(lower("$tok_lb_cloud$")),
+       raw_user=trim(lower("$tok_lb_user$"))
+
+| eval host_clean = if(len(raw_host)>0,
+      replace(raw_host,"([A-Za-z])","[\\1\\u\\1]"),
+      null())
+
+| eval ip_clean = if(len(raw_ip)>0,
+      replace(raw_ip,"\\.","\\."),
+      null())
+
+| eval cloud_local = lower(replace(raw_cloud,"@.*",""))
+| eval cloud_clean = if(len(cloud_local)>0,
+      replace(cloud_local,"([A-Za-z])","[\\1\\u\\1]"),
+      null())
+
+| eval user_clean = if(len(raw_user)>0,
+      replace(raw_user,"([A-Za-z])","[\\1\\u\\1]"),
+      null())
+
+| eval combined = mvjoin(mvfilter(len(mv)>0, mvappend(host_clean, ip_clean, cloud_clean, user_clean)), "|")
+
+| eval regex_output = "/.*(" . combined . ").*/"
+
+| table regex_output
