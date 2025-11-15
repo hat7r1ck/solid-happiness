@@ -1,29 +1,7 @@
-base 
-| eval user_hit = if(isnotnull(_m_user) AND _m_user == _entity, 1, 0)
-| eval host_hit = if(isnotnull(_m_host) AND _m_host == _entity, 1, 0)
-| eval ip_hit   = if(isnotnull(_m_ip)   AND _m_ip   == _entity, 1, 0)
-| eval mail_hit = if(isnotnull(_m_mail) AND _m_mail == _entity, 1, 0)
-| eval dom_hit  = if(isnotnull(_m_dom)  AND _m_dom  == _entity, 1, 0)
-| eval url_hit  = if(isnotnull(_m_url)  AND like(_m_url, "%" + _entity + "%"), 1, 0)
-| eval hash_hit = if(isnotnull(_m_hash) AND _m_hash == _entity, 1, 0)
-| eval risk_hit = if(isnotnull(_m_risk) AND _m_risk == _entity, 1, 0)
 
-| stats
-    sum(user_hit) as user_hits,
-    sum(host_hit) as host_hits,
-    sum(ip_hit)   as ip_hits,
-    sum(mail_hit) as mail_hits,
-    sum(dom_hit)  as dom_hits,
-    sum(url_hit)  as url_hits,
-    sum(hash_hit) as hash_hits,
-    sum(risk_hit) as risk_hits
-
-| transpose 0 column_name="hits" header_field="field"
-| where hits > 0
-| eval field = replace(field, "_hits$", "")
-
-
-
+notable
+| eval _entity = trim(lower("$tok_entity$"))
+| where len(_entity) > 0
 
 | eval _m_user = lower(coalesce(
     user,
@@ -102,148 +80,71 @@ base
     0
 )
 
-
-notable
-| eval _entity = trim(lower("$tok_entity$"))
-| where len(_entity) > 0
-
-| eval _m_user = lower(coalesce(
-      user,
-      src_user,
-      dest_user,
-      user_email,
-      user_identity,
-      user_first,
-      user_last,
-      user_nick
-))
-
-| eval _m_host = lower(coalesce(
-      host,
-      ComputerName,
-      src,
-      dest
-))
-
-| eval _m_ip = coalesce(
-      src,
-      src_ip,
-      dest,
-      dest_ip
-)
-
-| eval _m_mail = lower(coalesce(
-      user_email,
-      src_user_email,
-      dest_user_email
-))
-
-| eval _m_dom = lower(coalesce(
-      url_domain,
-      domain,
-      domain_base
-))
-
-| eval _m_url = lower(coalesce(
-      url,
-      uri,
-      domain_file
-))
-
-| eval _m_hash = lower(coalesce(
-      file_hash,
-      sha1,
-      sha256,
-      md5
-))
-
-| eval _m_risk = lower(coalesce(
-      risk_object
-))
-
-| eval _risk_score = coalesce(
-      user_risk_score,
-      risk_score,
-      src_risk_score,
-      dest_risk_score,
-      0
-)
-
 | eval _is_ip_entity = if(match(_entity, "^(\\d{1,3}\\.){3}\\d{1,3}(\\/\\d{1,2})?$"), 1, 0)
 
 | eval hit = if(
-      _m_user = _entity OR
-      _m_host = _entity OR
-      _m_ip = _entity OR
-      _m_mail = _entity OR
-      _m_dom = _entity OR
-      like(_m_url, "%" + _entity + "%") OR
-      _m_hash = _entity OR
-      _m_risk = _entity OR
-      (_is_ip_entity = 1 AND cidrmatch(_entity, tostring(_m_ip))),
-      1, 0
+      _m_user = _entity
+   OR _m_host = _entity
+   OR _m_ip   = _entity
+   OR _m_mail = _entity
+   OR _m_dom  = _entity
+   OR like(_m_url, "%" . _entity . "%")
+   OR _m_hash = _entity
+   OR _m_risk = _entity
+   OR (_is_ip_entity = 1 AND cidrmatch(_entity, tostring(_m_ip))),
+   1, 0
 )
 
 | where hit = 1
 
 
-2. 
+⸻
 
-| stats 
-      min(_time) as first_seen
-      max(_time) as last_seen
-      dc(risk_message) as detection_count
-      values(risk_message) as rules
-      sum(_risk_score) as total_risk
-      values(owner) as owners
-      values(status_label) as statuses
-      values(urgency) as urgencies
-      values(source_guid) as mc_ids
-      by risk_object
+
+
+| stats
+    min(_time) as first_seen
+    max(_time) as last_seen
+    dc(risk_message) as detection_count
+    values(owner) as owners
+    values(urgency) as urgencies
+    by risk_object
 
 | eval first_seen = strftime(first_seen, "%Y-%m-%d %H:%M:%S")
-| eval last_seen  = strftime(last_seen, "%Y-%m-%d %H:%M:%S")
+| eval last_seen  = strftime(last_seen,  "%Y-%m-%d %H:%M:%S")
 
-| eval rules     = mvjoin(mvindex(mvsort(rules),0,4), ", ")
 | eval owners    = mvjoin(mvindex(mvsort(owners),0,4), ", ")
-| eval statuses  = mvjoin(mvindex(mvsort(statuses),0,4), ", ")
 | eval urgencies = mvjoin(mvindex(mvsort(urgencies),0,4), ", ")
-| eval mc_ids    = mvjoin(mvindex(mvsort(mc_ids),0,4), ", ")
 
 | sort - last_seen
 
-| rename risk_object as "Risk Object",
-         mc_ids      as "MC Incident IDs",
-         total_risk  as "Total Risk",
-         detection_count as "Detection Count"
+| rename risk_object    AS "Risk Object",
+         detection_count AS "Detection Count"
 
-| fields last_seen first_seen "Risk Object" "MC Incident IDs" "Detection Count" "Total Risk" rules owners statuses urgencies
+| fields last_seen first_seen "Risk Object" "Detection Count" owners urgencies
+
 
 
 ⸻
 
-3.
 
+| eval detection_time = _time
+| eval rule_name        = coalesce(risk_message, rule_title, search_name)
+| eval rule_description = description
 
+| table detection_time rule_name rule_description source_guid owner status_label urgency
 
-| eval user_hit = if(_m_user = _entity, 1, 0)
-| eval host_hit = if(_m_host = _entity, 1, 0)
-| eval ip_hit = if(_m_ip = _entity, 1, 0)
-| eval mail_hit = if(_m_mail = _entity, 1, 0)
-| eval dom_hit = if(_m_dom = _entity, 1, 0)
-| eval url_hit = if(like(_m_url, "%" + _entity + "%"), 1, 0)
-| eval hash_hit = if(_m_hash = _entity, 1, 0)
-| eval risk_hit = if(_m_risk = _entity, 1, 0)
+| eval detection_time = strftime(detection_time, "%Y-%m-%d %H:%M:%S")
 
-| stats sum(user_hit) as user_hits,
-        sum(host_hit) as host_hits,
-        sum(ip_hit) as ip_hits,
-        sum(mail_hit) as mail_hits,
-        sum(dom_hit) as domain_hits,
-        sum(url_hit) as url_hits,
-        sum(hash_hit) as hash_hits,
-        sum(risk_hit) as risk_hits
+| sort - detection_time
 
-| transpose
-| where column_1 > 0
-| rename column as field, column_1 as hits
+| rename detection_time   AS "Detection Time",
+         owner            AS "Owner",
+         status_label     AS "Status",
+         urgency          AS "Urgency",
+         source_guid      AS "MC Incident ID",
+         rule_name        AS "Rule",
+         rule_description AS "Rule Description"
+
+| fields "Detection Time" "Owner" "Status" "Urgency" "MC Incident ID" "Rule" "Rule Description"
+
