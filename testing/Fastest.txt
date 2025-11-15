@@ -1,3 +1,34 @@
+| stats 
+    min(_time) as first_seen
+    max(_time) as last_seen
+    dc(rule_title) as detections
+    values(rule_title) as rules
+    sum(coalesce(risk_score,0)) as total_risk
+    values(owner) as owners
+    values(status_label) as statuses
+    values(urgency) as urgencies
+    values(coalesce(mc_incident_id, notable_xref_id, orig_sid, orig_rid)) as mc_ids
+    by risk_object
+
+| eval first_seen = strftime(first_seen, "%Y-%m-%d %H:%M:%S")
+| eval last_seen  = strftime(last_seen, "%Y-%m-%d %H:%M:%S")
+
+| eval rules     = mvjoin(mvindex(mvsort(rules),0,4), ", ")
+| eval owners    = mvjoin(mvindex(mvsort(owners),0,4), ", ")
+| eval statuses  = mvjoin(mvindex(mvsort(statuses),0,4), ", ")
+| eval urgencies = mvjoin(mvindex(mvsort(urgencies),0,4), ", ")
+| eval mc_ids    = mvjoin(mvindex(mvsort(mc_ids),0,4), ", ")
+
+| sort - last_seen
+
+| rename risk_object as "Risk Object",
+         mc_ids      as "MC Incident IDs",
+         total_risk  as "Total Risk",
+         detections  as "Detection Count"
+
+| fields last_seen first_seen "Risk Object" "MC Incident IDs" "Detection Count" "Total Risk" rules owners statuses urgencies
+
+
 | where isnotnull(_m_user) AND _m_user != ""
 | stats
     dc(_m_host) as host_count
