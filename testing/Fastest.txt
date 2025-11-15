@@ -1,0 +1,61 @@
+| eval _m_user = lower(coalesce(
+    user,
+    src_user,
+    dest_user,
+    identity,
+    user_name,
+    user_normalized
+))
+
+| eval _m_host = lower(coalesce(
+    host,
+    hostname,
+    dest,
+    dvc,
+    dest_nt_host,
+    src_nt_host,
+    ComputerName,
+    `alert.target.hostname`
+))
+
+| eval _m_ip = coalesce(
+    src,
+    src_ip,
+    dest,
+    dest_ip,
+    dvc_ip
+)
+
+| eval _m_mail = lower(coalesce(
+    user_email,
+    src_user_email,
+    dest_user_email,
+    recipient,
+    sender
+))
+
+| eval _m_dom = lower(coalesce(
+    url_domain,
+    dest_dns,
+    domain,
+    query
+))
+
+| eval _m_url = lower(coalesce(
+    url,
+    uri,
+    uri_path,
+    request
+))
+
+| eval _m_hash = lower(coalesce(
+    file_hash,
+    sha256,
+    sha1,
+    md5
+))
+
+| eval _m_risk = lower(coalesce(
+    risk_object,
+    normalized_risk_object
+))
