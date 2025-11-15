@@ -1,3 +1,65 @@
+`notable`
+| eval _entity = trim(lower("$tok_entity$"))
+| where risk_object=_entity
+
+| stats 
+    max(_time) as last_seen
+    min(_time) as first_seen
+    dc(rule_title) as detection_count
+    values(risk_object) as risk_object
+    sum(coalesce(risk_score,0)) as total_risk
+    values(owner) as owners
+    values(status_label) as statuses
+    values(urgency) as urgencies
+    values(disposition) as dispositions
+    values(coalesce(mc_incident_id, source_guid, orig_sid, orig_rid)) as mc_ids
+    by risk_object
+
+| eval last_seen=strftime(last_seen,"%Y-%m-%d %H:%M:%S")
+| eval first_seen=strftime(first_seen,"%Y-%m-%d %H:%M:%S")
+
+| eval mc_ids = mvjoin(mvsort(mc_ids), ", ")
+| eval owners = mvjoin(mvsort(owners), ", ")
+| eval statuses = mvjoin(mvsort(statuses), ", ")
+| eval urgencies = mvjoin(mvsort(urgencies), ", ")
+| eval dispositions = mvjoin(mvsort(dispositions), ", ")
+
+| rename
+    risk_object as "Risk Object",
+    detection_count as "Detection Count",
+    total_risk as "Total Risk",
+    mc_ids as "MC Incident IDs",
+    dispositions as "Dispositions"
+
+| fields last_seen first_seen "Risk Object" "MC Incident IDs" "Detection Count" "Total Risk" owners statuses urgencies "Dispositions"
+
+
+
+
+
+`notable`
+| eval _entity = trim(lower("$tok_entity$"))
+| where risk_object=_entity
+
+| eval detection_time=strftime(_time,"%Y-%m-%d %H:%M:%S")
+| eval case_id=coalesce(mc_incident_id, source_guid, orig_sid, orig_rid)
+
+| table detection_time owner status_label urgency case_id rule_title description risk_score disposition risk_object
+
+| sort - detection_time
+
+| rename
+    detection_time as "Detection Time",
+    status_label as "Status",
+    case_id as "MC Incident ID",
+    rule_title as "Rule",
+    description as "Rule Description",
+    risk_score as "Risk Score",
+    disposition as "Disposition",
+    risk_object as "Risk Object"
+
+
+
 
 notable
 | eval _entity = trim(lower("$tok_entity$"))
