@@ -1,3 +1,23 @@
+| makeresults
+| eval host = trim("$tok_lb_host$"),
+      ip = trim("$tok_lb_ip$"),
+      cloud = trim("$tok_lb_cloud$"),
+      user = trim("$tok_lb_user$")
+| eval parts = mvappend(
+        if(len(host)>0, host, null()),
+        if(len(ip)>0, ip, null()),
+        if(len(cloud)>0, cloud, null()),
+        if(len(user)>0, user, null())
+      )
+| mvexpand parts
+| eval built = replace(parts, "([A-Za-z])", "[\\1\\U\\1]")
+| eval built = replace(built, "\\.", "\\.")
+| stats values(built) as built
+| eval regex = "/.*" . mvjoin(built, "|") . ".*/"
+| table regex
+
+
+
 Core Backgrounds
 	•	Primary Background: #1e1e2e
 	•	Panel Surface: #242434
