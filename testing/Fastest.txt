@@ -1,5 +1,37 @@
 | makeresults
 
+| eval host_raw  = trim(coalesce("$tok_lb_host$", "")),
+       ip_raw    = trim(coalesce("$tok_lb_ip$", "")),
+       cloud_raw = trim(coalesce("$tok_lb_cloud$", "")),
+       user_raw  = trim(coalesce("$tok_lb_user$", ""))
+
+| eval regex = ""
+
+| eval regex = if(host_raw!="",
+                  regex . host_raw . "|",
+                  regex)
+
+| eval regex = if(ip_raw!="",
+                  regex . replace(ip_raw, "\.", "\\.") . "|",
+                  regex)
+
+| eval regex = if(cloud_raw!="",
+                  regex . mvindex(split(cloud_raw,"@"),0) . "|",
+                  regex)
+
+| eval regex = if(user_raw!="",
+                  regex . user_raw,
+                  regex)
+
+| eval regex = trim(regex, "|")
+
+| eval regex = "/.*" . regex . ".*/"
+
+| table regex
+
+
+| makeresults
+
 | eval host_raw = trim(coalesce("$tok_lb_host$", "")),
        ip_raw   = trim(coalesce("$tok_lb_ip$", "")),
        cloud_raw= trim(coalesce("$tok_lb_cloud$", "")),
