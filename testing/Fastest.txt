@@ -4,6 +4,26 @@
        cloud_raw= trim("$tok_lb_cloud$"),
        user_raw = trim("$tok_lb_user$")
 | eval host  = if(host_raw!="", host_raw, null()),
+       ip    = if(ip_raw!="", replace(ip_raw, "\\.", "\\\\."), null()),
+       cloud = if(cloud_raw!="", mvindex(split(cloud_raw,"@"),0), null()),
+       user  = if(user_raw!="", user_raw, null())
+| eval part1 = if(isnull(host), null(), host)
+| eval part2 = if(isnull(ip), null(), ip)
+| eval part3 = if(isnull(cloud), null(), cloud)
+| eval part4 = if(isnull(user), null(), user)
+| eval parts = mvappend(part1, part2, part3, part4)
+| eval parts = mvindex(parts, 0, mvcount(parts)-1)
+| eval regex_core = if(mvcount(parts)==0, "", mvjoin(parts, "|"))
+| eval regex = "/.*" . regex_core . ".*/"
+| table regex
+
+
+| makeresults
+| eval host_raw = trim("$tok_lb_host$"),
+       ip_raw   = trim("$tok_lb_ip$"),
+       cloud_raw= trim("$tok_lb_cloud$"),
+       user_raw = trim("$tok_lb_user$")
+| eval host  = if(host_raw!="", host_raw, null()),
        ip    = if(ip_raw!="", replace(ip_raw, "\.", "\\."), null()),
        cloud = if(cloud_raw!="", mvindex(split(cloud_raw,"@"),0), null()),
        user  = if(user_raw!="", user_raw, null())
