@@ -1,3 +1,18 @@
+| mvexpand parts
+| eval chars = split(parts,"")
+| eval chars_ci = mvmap(
+        chars,
+        if(match(<<FIELD>>,"[A-Za-z]"),
+            "[" . lower(<<FIELD>>) . upper(<<FIELD>>) . "]",
+            if(<<FIELD>>=".", "\\.", <<FIELD>>)
+        )
+  )
+| eval built = mvjoin(chars_ci,"")
+| stats values(built) as built
+| eval regex = "/.*" . mvjoin(built,"|") . ".*"
+| table regex
+
+
 | makeresults
 | eval host_raw = trim("$tok_lb_host\\\\|$"),
        ip_raw   = trim("$tok_lb_ip\\\\|$"),
