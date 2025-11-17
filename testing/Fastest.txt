@@ -1,4 +1,31 @@
 | makeresults
+| eval host = trim("$tok_lb_host|default:\"\"$"),
+      ip   = trim("$tok_lb_ip|default:\"\"$"),
+      cloud= trim("$tok_lb_cloud|default:\"\"$"),
+      user = trim("$tok_lb_user|default:\"\"$")
+| eval parts = mvappend(
+        if(len(host)>0, host, null()),
+        if(len(ip)>0, ip, null()),
+        if(len(cloud)>0, cloud, null()),
+        if(len(user)>0, user, null())
+      )
+| mvexpand parts
+| eval chars = split(parts,"")
+| eval chars = mvmap(
+        chars,
+        if(
+            match(<<chars>>,"[A-Za-z]"),
+            "[" . lower(<<chars>>) . upper(<<chars>>) . "]",
+            if(<<chars>>=".", "\\.", <<chars>>)
+        )
+  )
+| eval built = mvjoin(chars,"")
+| stats values(built) as built
+| eval regex = "/.*" . mvjoin(built, "|") . ".*"
+| table regex
+
+
+| makeresults
 
 | eval host_raw = trim("$tok_lb_host$"),
       ip_raw   = trim("$tok_lb_ip$"),
