@@ -3,6 +3,39 @@
       ip_raw    = trim("$tok_lb_ip$"),
       cloud_raw = trim("$tok_lb_cloud$"),
       user_raw  = trim("$tok_lb_user$")
+| eval host  = if(host_raw=="~", null(), host_raw),
+      ip    = if(ip_raw=="~", null(), replace(ip_raw,"\.", "\\.")),
+      cloud = if(cloud_raw=="~", null(), mvindex(split(cloud_raw,"@"),0)),
+      user  = if(user_raw=="~", null(), user_raw)
+| eval parts = mvappend(host, ip, cloud, user)
+| eval parts = mvmap(parts, if(isnull(parts) OR parts=="", null(), parts))
+| eval parts = mvfilter(NOT isnull(parts))
+| mvexpand parts
+| eval chars = split(parts,"")
+| mvexpand chars
+| streamstats count as pos by parts
+| eval step1 = case(
+      match(chars,"[A-Za-z]"), "[" . lower(chars) . upper(chars) . "]",
+      chars=".", "\\.",
+      1=1, chars
+)
+| stats list(step1) as step1 by parts
+| eval built = mvjoin(step1,"")
+| stats list(built) as built
+| eval pattern_core = case(
+      mvcount(built)==0, "",
+      mvcount(built)==1, mvindex(built,0),
+      mvcount(built)>1, "(" . mvjoin(built,"|") . ")"
+)
+| eval regex = "\"/.*" . pattern_core . ".*/\""
+| table regex
+
+
+| makeresults
+| eval host_raw = trim("$tok_lb_host$"),
+      ip_raw    = trim("$tok_lb_ip$"),
+      cloud_raw = trim("$tok_lb_cloud$"),
+      user_raw  = trim("$tok_lb_user$")
 
 | eval host  = if(host_raw=="~", null(), host_raw),
       ip    = if(ip_raw=="~", null(), replace(ip_raw,"\.", "\\.")),
