@@ -1,3 +1,33 @@
+| makeresults
+| eval host_raw = trim(coalesce("$tok_lb_host$", "")),
+       ip_raw   = trim(coalesce("$tok_lb_ip$", "")),
+       cloud_raw= trim(coalesce("$tok_lb_cloud$", "")),
+       user_raw = trim(coalesce("$tok_lb_user$", ""))
+
+| eval host  = if(host_raw != "", host_raw, null()),
+       ip    = if(ip_raw != "", replace(ip_raw, "\.", "\\."), null()),
+       cloud = if(cloud_raw != "", mvindex(split(cloud_raw, "@"), 0), null()),
+       user  = if(user_raw != "", user_raw, null())
+
+| eval parts = mvappend(host, ip, cloud, user)
+| eval parts = mvfilter(isnotnull(parts) AND parts != "")
+
+| mvexpand parts
+| eval chars = split(parts, "")
+| eval chars_ci = mvmap(
+        chars,
+        if(match(<<FIELD>>, "[A-Za-z]"),
+            "[" . lower(<<FIELD>>) . upper(<<FIELD>>) . "]",
+            if(<<FIELD>>=".", "\\.", <<FIELD>>)
+        )
+  )
+| eval built = mvjoin(chars_ci, "")
+| stats values(built) as built
+| eval regex = "/.*" . mvjoin(built, "|") . ".*/"
+| table regex
+
+
+
 | mvexpand parts
 | eval chars = split(parts,"")
 | eval chars_ci = mvmap(
