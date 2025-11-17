@@ -1,4 +1,27 @@
 | makeresults
+| eval host_raw = trim("$tok_lb_host$"),
+       ip_raw   = trim("$tok_lb_ip$"),
+       cloud_raw= trim("$tok_lb_cloud$"),
+       user_raw = trim("$tok_lb_user$")
+       
+| eval host  = if(host_raw=="~", null(), host_raw),
+       ip    = if(ip_raw=="~", null(), replace(ip_raw, "\.", "\\.")),
+       cloud = if(cloud_raw=="~", null(), mvindex(split(cloud_raw,"@"),0)),
+       user  = if(user_raw=="~", null(), user_raw)
+
+| eval parts = mvappend(host, ip, cloud, user)
+| eval parts = mvfilter(isnotnull(parts))
+
+| eval regex_core = mvjoin(parts, "|")
+| eval regex = "/.*".regex_core.".*/"
+| table regex
+
+
+
+
+
+
+| makeresults
 
 | eval host_raw  = trim(coalesce("$tok_lb_host$", "")),
        ip_raw    = trim(coalesce("$tok_lb_ip$", "")),
