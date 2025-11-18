@@ -1,3 +1,16 @@
+| eval detection_ts=_time
+| eval label=coalesce(risk_message, rule_title, search_name)
+| eval y_val=case(
+    urgency="critical", 3,
+    urgency="high", 2,
+    urgency="medium", 1,
+    1=1, 0
+)
+| table detection_ts y_val label urgency
+
+
+
+
 | eval start=_time
 | eval label=coalesce(risk_message, rule_title, search_name)
 | eval group=urgency
