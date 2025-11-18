@@ -1,3 +1,16 @@
+| eval detection_ts = strftime(_time,"%Y-%m-%d %H:%M:%S")
+| eval detection_ts = strptime(detection_ts,"%Y-%m-%d %H:%M:%S")
+| eval rule_name = coalesce(risk_message, rule_title, search_name)
+| eval description = rule_description
+| eval category = urgency
+| streamstats count as evt_y
+| table detection_ts evt_y rule_name category description urgency
+
+
+
+
+
+
 | eval detection_time=_time
 | eval rule_name=coalesce(risk_message, rule_title, search_name)
 | eval evt_y = 1
