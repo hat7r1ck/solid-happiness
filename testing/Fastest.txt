@@ -1,3 +1,10 @@
+<your 90-day entity base search here>
+| eval label = coalesce(risk_message, rule_title, search_name)
+| bin _time span=1d
+| stats count avg(risk_score) as avg_risk by _time urgency label
+
+
+
 <base search>
 | search _is_entity=1
 | eval detection_ts=_time
