@@ -1,3 +1,129 @@
+
+1. KPI Searches
+
+These all assume a base macro or input token for entity resolution. Adjust the base search line to your environment. Everything downstream is consistent.
+
+1.1 KPI_Detections90
+
+<base search for ES notables or risk modifiers>
+| search _is_entity=1
+| stats count as detections_90
+
+1.2 KPI_UniqueRules90
+
+<base search>
+| search _is_entity=1
+| stats count by rule_title
+| stats count as unique_rules_90
+
+1.3 KPI_UniqueHosts90
+
+<base search>
+| search _is_entity=1
+| stats count by src_host
+| stats count as unique_hosts_90
+
+1.4 KPI_UniqueIPs90
+
+<base search>
+| search _is_entity=1
+| stats count by src_ip
+| stats count as unique_ips_90
+
+
+⸻
+
+2. Primary Timeline Panel
+
+Use this for the middle wide panel.
+Visualization: Event Timeline.
+Uses the Splunk Timeline Viz fields: start, end, label, group, color.
+
+2.1 Behavior_Timeline_90
+
+<base search>
+| search _is_entity=1
+| eval start=_time
+| eval end=_time+60
+| eval label=coalesce(risk_message, rule_title, search_name)
+| eval group=urgency
+| eval color=urgency
+| table start end label group color
+
+This creates a one minute bar so the timeline displays cleanly.
+
+⸻
+
+3. Scatterplot Fallback
+
+Use this only if Event Timeline breaks or is not available.
+This is the variant that avoids epoch display.
+
+3.1 Behavior_Scatter_Fallback
+
+<base search>
+| search _is_entity=1
+| eval detection_ts=_time
+| eval y_val=case(
+    urgency="critical", 4,
+    urgency="high",     3,
+    urgency="medium",   2,
+    urgency="low",      1,
+    1=1,                0
+)
+| eval label=coalesce(risk_message, rule_title, search_name)
+| table detection_ts y_val label urgency
+
+X axis is detection_ts (time).
+Y axis is ordinal based on urgency.
+Category can be label or urgency.
+
+⸻
+
+4. Suppressed Events (Truth Table Audit)
+
+Place this in Lookback and Audit.
+Pulls indicators suppressed due to false positive classification.
+
+4.1 Suppressed_TruthTable
+
+inputlookup RIR-Deduplicate.csv
+| search alert="yes"
+| fillnull value="unknown" suppression_reason
+| table _time ioc_value suppression_reason analyst user disposition
+
+If you need entity filtering:
+
+inputlookup RIR-Deduplicate.csv
+| search alert="yes"
+| where match(ioc_value, $tok_lb_regex$)
+| fillnull value="unknown" suppression_reason
+| table _time ioc_value suppression_reason analyst user disposition
+
+
+⸻
+
+5. Entity Lookup Cards (for swapping device and identity panels)
+
+These are for the top right cards if you reorganize them.
+
+5.1 Identity_Lookup
+
+| makeresults 
+| eval user="$form.user$"
+| lookup identities_lookup user OUTPUT display_name email title department
+| table display_name email title department
+
+5.2 Host_Lookup
+
+| makeresults
+| eval host="$form.host$"
+| lookup assets_lookup host OUTPUT os version owner criticality
+| table os version owner criticality
+
+
+⸻
+
 eval detection_ts=_time
 eval label=coalesce(risk_message, rule_title, search_name)
 eval y_val=case(
