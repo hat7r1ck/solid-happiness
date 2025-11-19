@@ -1,3 +1,80 @@
+
+1. Suppressed_Detections_Count
+
+Purpose: Count of suppressed detections tied to this entity.
+
+Visualization: Single Value (recommended) or Single Value Radial.
+
+SPL:
+
+| lookup rit_duplicate_truth.csv risk_object 
+      OUTPUT previousNotable
+| where lower(risk_object)=lower(_entity)
+| where isnotnull(previousNotable)
+| stats count as suppressed_detections
+
+
+⸻
+
+2. Disposition_Breakdown
+
+Purpose: Frequency of dispositions for this entity across the 90-day window.
+
+Visualization: Bar Chart (horizontal or vertical)
+
+SPL:
+
+<your 90_day_entity_base_search>
+| stats count as ct by disposition_label
+| sort -ct
+
+
+⸻
+
+3. Urgency_Breakdown
+
+Purpose: Urgency mix for all detections tied to this entity.
+
+Visualization: Pie Chart
+
+SPL:
+
+<your 90_day_entity_base_search>
+| stats count as ct by urgency
+| sort -ct
+
+
+⸻
+
+4. Suppression_Status_Source
+
+Purpose: Show why suppressions occurred (previousStatus) and which rule source generated them.
+
+Visualization: Bar Chart
+
+SPL:
+
+| lookup rit_duplicate_truth.csv risk_object 
+      OUTPUT previousStatus source
+| where lower(risk_object)=lower(_entity)
+| where isnotnull(previousStatus)
+| stats count as ct by previousStatus source
+| sort -ct
+
+
+⸻
+
+Left to right on the bottom row:
+	1.	Suppressed_Detections_Count
+	2.	Disposition_Breakdown
+	3.	Urgency_Breakdown
+	4.	Suppression_Status_Source
+
+
+
+
+
+
 <your_90_day_entity_search>
 | eval rule = coalesce(risk_message, rule_title, search_name)
 | eval detection_date=strftime(_time,"%Y-%m-%d")
