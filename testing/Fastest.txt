@@ -1,3 +1,19 @@
+<base search>
+| search _is_entity=1
+| eval detection_ts=_time
+| eval label=coalesce(risk_message, rule_title, search_name)
+| eval y_val=case(
+    urgency="critical", 4,
+    urgency="high", 3,
+    urgency="medium", 2,
+    urgency="low", 1,
+    1=1, 0
+)
+| table detection_ts y_val label urgency
+
+
+
+
 
 1. KPI Searches
 
