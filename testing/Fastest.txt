@@ -1,3 +1,15 @@
+<your_90_day_entity_search>
+| eval rule = coalesce(risk_message, rule_title, search_name)
+| eval detection_date=strftime(_time,"%Y-%m-%d")
+| stats count values(rule) as rules by detection_date
+| eval _time=strptime(detection_date,"%Y-%m-%d")
+| table _time count rules
+| sort _time
+
+
+
+
+
 <your 90-day entity base search here>
 | eval label = coalesce(risk_message, rule_title, search_name)
 | bin _time span=1d
