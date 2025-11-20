@@ -1,4 +1,53 @@
 | makeresults
+| eval ent = trim(lower("$tok_entity$"))
+| where len(ent) > 0 AND ent != "~"
+
+| eval host_raw  = "~",
+       ip_raw    = "~",
+       cloud_raw = "~",
+       user_raw  = "~"
+
+| eval ip_raw    = if(match(ent,"^\\d{1,3}(\\.\\d{1,3}){3}$"), ent, ip_raw)
+| eval cloud_raw = if(like(ent,"%@%"), ent, cloud_raw)
+| eval user_raw  = if(ip_raw=="~" AND cloud_raw=="~", ent, user_raw)
+| eval host_raw  = if(ip_raw=="~" AND cloud_raw=="~" AND user_raw=="~", ent, host_raw)
+
+| eval host  = if(host_raw=="~", null(), host_raw),
+       ip    = if(ip_raw=="~", null(), ip_raw),
+       cloud = if(cloud_raw=="~", null(), mvindex(split(cloud_raw,"@"),0)),
+       user  = if(user_raw=="~", null(), user_raw)
+
+| eval parts = mvappend(host, ip, cloud, user)
+| eval parts = mvfilter(NOT isnull(parts))
+
+| mvexpand parts
+| eval chars = split(parts,"")
+| mvexpand chars
+
+| eval ci = case(
+      match(chars,"[A-Za-z]"), "[" . lower(chars) . upper(chars) . "]",
+      chars=".", "\\.",
+      1=1, chars
+)
+
+| stats values(ci) as ci by parts
+| eval built = mvjoin(ci,"")
+
+| stats values(built) as built
+| eval pattern_core = case(
+      mvcount(built)==0, "",
+      mvcount(built)==1, mvindex(built,0),
+      mvcount(built)>1, "(" . mvjoin(built,"|") . ")"
+)
+
+| eval regex = "\"/.*" . pattern_core . ".*/\""
+| table regex
+
+
+
+
+
+| makeresults
 | eval _ent_val = trim(lower("$tok_entity$"))
 
 | eval host_raw  = null()
