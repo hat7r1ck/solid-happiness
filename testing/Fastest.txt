@@ -1,3 +1,27 @@
+| eval rule_name = coalesce(risk_message, rule_title, search_name)
+| eval date_node   = "Date: " . strftime(_time,"%Y-%m-%d")
+| eval rule_node   = "Rule: " . rule_name
+| eval contrib_raw = mvindex(contributing_events_search,0)
+| eval contrib_node = if(isnull(contrib_raw) OR contrib_raw="",
+                         "Contrib: (none defined)",
+                         "Contrib: " . contrib_raw)
+
+| eval source = date_node
+| eval target = rule_node
+| eval weight = 1
+| eval edge_type = "date_to_rule"
+
+| appendpipe [
+    eval source   = rule_node
+    | eval target = contrib_node
+    | eval weight = 1
+    | eval edge_type = "rule_to_contrib"
+]
+
+| table source target weight edge_type
+
+
+
 | makeresults
 | eval host_raw  = "~",
       ip_raw    = "~",
