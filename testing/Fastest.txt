@@ -1,3 +1,26 @@
+| eval det_date=strftime(_time,"%Y-%m-%d")
+| eval rule_name=coalesce(risk_message, rule_title, search_name, "Unknown rule")
+| eval contrib=coalesce(contributing_events_search,"No related search")
+| where len(rule_name)>0
+| eval source="Date: ".det_date
+| eval target="Rule: ".rule_name
+| eval edge_type="date_to_rule"
+| eval weight=1
+| table source target edge_type weight
+| appendpipe [
+    | eval source="Rule: ".rule_name
+    | eval target="Contrib: ".contrib
+    | eval edge_type="rule_to_contrib"
+    | eval weight=1
+    | table source target edge_type weight
+]
+
+
+
+
+
+
+
 | eval det_date = strftime(_time,"%Y-%m-%d")
 | eval rule_name = coalesce(risk_message, rule_title, search_name)
 | eval contrib   = coalesce(contributing_events_search, "No related search")
