@@ -1,3 +1,25 @@
+Search_3
+| eval det_date = strftime(_time,"%Y-%m-%d")
+| eval rule_name = coalesce(risk_message, rule_title, search_name, "Unknown rule")
+| eval contrib = coalesce(contributing_events_search, "No related search")
+| eval date_node = "Date: " . det_date
+| eval rule_node = "Rule: " . rule_name
+| eval contrib_node = "Contrib: " . contrib
+| eval weight = 1
+| eval edge_triplets = mvappend(
+    date_node . "|" . rule_node . "|date_to_rule",
+    rule_node . "|" . contrib_node . "|rule_to_contrib"
+)
+| mvexpand edge_triplets
+| eval source = mvindex(split(edge_triplets,"|"),0)
+| eval target = mvindex(split(edge_triplets,"|"),1)
+| eval edge_type = mvindex(split(edge_triplets,"|"),2)
+| where isnotnull(source) AND isnotnull(target)
+| table source target edge_type weight
+
+
+
+
 mitre_tactics_global
 | chart count over annotations.mitre_attack.mitre_tactic by annotations.mitre_attack.mitre_technique
 | rename "annotations.mitre_attack.mitre_tactic" as tactic
