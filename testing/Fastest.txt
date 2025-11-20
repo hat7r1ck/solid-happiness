@@ -1,21 +1,21 @@
-| eval det_date = strftime(_time, "%Y-%m-%d")
+| eval det_date = strftime(_time,"%Y-%m-%d")
 | eval rule_name = coalesce(risk_message, rule_title, search_name)
-| eval contrib_raw = trim(contributing_events_search)
-
+| eval has_contrib = if(len(trim(contributing_events_search))>0, 1, 0)
 | where isnotnull(rule_name)
 
-| eval source = "Date: " . det_date
-| eval target = "Rule: " . rule_name
+| eval source   = "Date: " . det_date
+| eval target   = "Rule: " . rule_name
 | eval edge_type = "date_to_rule"
-| eval weight = 1
+| eval weight   = 1
 
-| table source target edge_type weight det_date rule_name contrib_raw
+| table source target edge_type weight has_contrib rule_name det_date
 
 | appendpipe [
-    | where len(contrib_raw) > 0
-    | eval source = "Rule: " . rule_name
-    | eval target = "Contributing events search"
+    | where has_contrib = 1
+    | eval source   = "Rule: " . rule_name
+    | eval target   = "Contributing events"
     | eval edge_type = "rule_to_contrib"
-    | eval weight = 1
-    | table source target edge_type weight det_date rule_name contrib_raw
+    | eval weight   = 1
 ]
+
+| table source target edge_type weight
