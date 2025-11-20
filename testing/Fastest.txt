@@ -1,3 +1,70 @@
+| makeresults
+| eval host_raw  = "~",
+      ip_raw    = "~",
+      cloud_raw = "~",
+      user_raw  = trim("$form.tok_entity$")
+
+| eval host  = if(host_raw=="~", null(), host_raw),
+      ip    = if(ip_raw=="~",   null(), ip_raw),
+      cloud = if(cloud_raw=="~", null(), mvindex(split(cloud_raw,"@"),0)),
+      user  = if(user_raw=="~", null(), user_raw)
+
+| eval parts = mvappend(host, ip, cloud, user)
+| eval parts = mvfilter(NOT isnull(parts))
+
+| mvexpand parts
+| eval chars = split(parts,"")
+| mvexpand chars
+
+| eval ci = case(
+      match(chars,"[A-Za-z]"), "[" . lower(chars) . upper(chars) . "]",
+      chars=".", "\\.",
+      1=1, chars
+)
+
+| stats values(ci) as ci by parts
+| eval built = mvjoin(ci,"")
+
+| stats values(built) as built
+
+| eval pattern_core = case(
+      mvcount(built)==0, "",
+      mvcount(built)==1, mvindex(built,0),
+      mvcount(built)>1, "(" . mvjoin(built,"|") . ")"
+)
+
+| eval regex = "\"/.*" . pattern_core . ".*/\""
+| table regex
+
+
+
+
+
+
+| eval rule_name = coalesce(risk_message, rule_title, search_name)
+| eval detection_date = strftime(_time, "%Y-%m-%d")
+| eval ce_label = contributing_events_search
+| where isnotnull(ce_label) AND ce_label != ""
+| eval node_date = "Date: " . detection_date
+| eval node_rule = "Rule: " . rule_name
+| eval node_ce   = "Contrib: " . ce_label
+
+| stats count as weight by node_date node_rule node_ce
+
+| eval source = node_date
+| eval target = node_rule
+| eval edge_type = "date_to_rule"
+
+| appendpipe [
+    eval source = node_rule
+    | eval target = node_ce
+    | eval edge_type = "rule_to_contrib"
+]
+
+| table source target weight edge_type
+
+
+
 
 1. Suppressed_Detections_Count
 
