@@ -1,3 +1,20 @@
+| makeresults
+| eval _ent_val = trim(lower("$tok_entity$"))
+
+| eval host_raw  = null()
+| eval ip_raw    = null()
+| eval cloud_raw = null()
+| eval user_raw  = null()
+
+| eval ip_raw    = if(match(_ent_val,"^\\d{1,3}(\\.\\d{1,3}){3}$"), _ent_val, null())
+| eval cloud_raw = if(like(_ent_val,"%@%"), _ent_val, null())
+| eval user_raw  = if(isnull(cloud_raw) AND match(_ent_val,"^[a-z0-9._-]+$"), _ent_val, null())
+| eval host_raw  = if(isnull(ip_raw) AND isnull(cloud_raw) AND isnull(user_raw), _ent_val, host_raw)
+
+
+
+
+
 | eval det_date = strftime(_time,"%Y-%m-%d")
 | eval rule_name = coalesce(risk_message, rule_title, search_name)
 | eval has_contrib = if(len(trim(contributing_events_search))>0, 1, 0)
