@@ -1,8 +1,7 @@
 ggghh
 | from datamodel:"Risk.All_Risk"
 | eval source = search_name
-| lookup RIR-Deduplicate.csv risk_object source OUTPUT alert
-| fillnull value="unknown" alert
+| lookup RIR-Deduplicate.csv _time risk_object source risk_score OUTPUT alert alert_status
 
 | eval _entity = trim(lower("$tok_entity$"))
 | where len(_entity) > 0
@@ -16,7 +15,9 @@ ggghh
     user_normalized,
     user_email
 ))
+
 | eval _m_mail = lower(user_email)
+
 | eval _m_host = lower(coalesce(
     host,
     hostname,
@@ -24,28 +25,21 @@ ggghh
     dvc,
     dest_nt_host,
     src_nt_host,
-    ComputerName
+    ComputerName,
+    'alert.target.hostname'
 ))
-| eval _m_risk = lower(risk_object)
 
 | eval norm_user = case(
     like(_entity,"%@%"), coalesce(_m_mail,_m_user),
     1=1, _m_user
 )
 
-| eval hit = case(
-    _m_risk = _entity, 1,
-    norm_user = _entity, 1,
-    _m_host = _entity, 1,
-    1=1, 0
-)
+| eval hit = if(
+      norm_user=_entity
+   OR _m_host=_entity,
+    1,0)
 
 | where hit=1
 
-| table _time risk_object source alert alert_status risk_score user host summary
+| table _time risk_object source alert alert_status risk_score norm_user _m_host summary
 | sort -_time
-
-
-
-
-
