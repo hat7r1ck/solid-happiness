@@ -1,1 +1,84 @@
 ggg
+| from datamodel:"Risk.All_Risk"
+| eval source = search_name
+
+| lookup RIR-Deduplicate.csv _time risk_object source risk_score OUTPUT alert AS alert_raw
+
+| eval _entity = trim(lower("$tok_entity$"))
+| where len(_entity) > 0
+
+| eval _m_user = lower(coalesce(
+    user,
+    src_user,
+    dest_user,
+    normalized_user,
+    user_email
+))
+| eval _m_mail = lower(coalesce(
+    user_email,
+    src_user_email,
+    dest_user_email
+))
+| eval _m_host = lower(coalesce(
+    host,
+    hostname,
+    dest_hostname,
+    src_hostname,
+    dvc,
+    ComputerName,
+    dest_hostname_normalized,
+    src_hostname_normalized
+))
+| eval _m_ip = coalesce(
+    src_ip,
+    dest_ip,
+    public_ip,
+    clientIpAddress,
+    src
+)
+| eval _m_risk = lower(risk_object)
+
+| eval _is_ip_entity = if(match(_entity,"^(\\d{1,3}\\.){3}\\d{1,3}$"),1,0)
+
+| eval hit = if(
+    _m_user = _entity
+    OR _m_mail = _entity
+    OR _m_host = _entity
+    OR _m_risk = _entity
+    OR (_is_ip_entity = 1 AND cidrmatch(_entity,tostring(_m_ip))),
+    1,
+    0
+)
+| where hit = 1
+
+| eval alert = case(
+    alert_raw = "no", "no",
+    1 = 1,           "yes"
+)
+| eval alert_status = if(alert = "no","Suppressed","Alerted")
+
+| table _time risk_object risk_object_type risk_score source alert alert_status _m_user _m_host _m_ip _m_risk
+| sort - _time
+
+
+
+| eval detection_time = _time
+| eval rule_name = coalesce(risk_message, rule_title, search_name)
+| eval rule_description = description
+| eval mc_incident_id = source_guid
+
+| table detection_time rule_name rule_description mc_incident_id owner status_label urgency contributing_events_search
+
+| eval detection_time = strftime(detection_time, "%Y-%m-%d %H:%M:%S")
+
+| rename detection_time as "Detection Time",
+        rule_name as "Rule",
+        rule_description as "Rule Description",
+        mc_incident_id as "MC Incident ID",
+        owner as "Owner",
+        status_label as "Status",
+        urgency as "Urgency",
+        contributing_events_search as _hidden_search
+
+| fields "Detection Time" "Rule" "Rule Description" "MC Incident ID" "Owner" "Status" "Urgency" _hidden_search
+| sort -"Detection Time"
