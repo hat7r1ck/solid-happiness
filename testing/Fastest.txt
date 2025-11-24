@@ -1,25 +1,149 @@
-"options": {
-    "dataValuesDisplay": "all",
-    "legendTruncation": "ellipsisOff",
-    "lineWidth": 3,
-    "markerDisplay": "outlined",
-    "showXMajorGridLines": true,
-    "showYAxisWithZero": true,
-    "x": "> primary | seriesByName('_time')",
-    "xAxisLabelVisibility": "show",
-    "xAxisLineVisibility": "show",
-    "xAxisMajorTickSize": 8,
-    "xAxisMajorTickVisibility": "show",
-    "xAxisTitleText": "Date",
-    "y": "> primary | exclude('_time', '_span', '_spandays')",
-    "yAxisMinorTickSize": 7,
-    "yAxisTitleVisibility": "show",
-    "yAxisAbbreviation": "off",
-    "yAxisLabelVisibility": "show",
-    "yAxisLineVisibility": "show",
-    "yAxisMajorTickInterval": 1,
-    "yAxisMajorTickSize": 7,
-    "yAxisMajorTickVisibility": "show",
-    "yAxisTitleText": "Detection Count",
-    "nullValueDisplay": "connect"
-},
+Data model 
+
+Field coverage helper for Risk.All_Risk
+
+| from datamodel:"Risk.All_Risk"
+| stats
+    count(eval(isnotnull(user)))                as user
+    count(eval(isnotnull(src_user)))            as src_user
+    count(eval(isnotnull(dest_user)))           as dest_user
+    count(eval(isnotnull(identity)))            as identity
+    count(eval(isnotnull(user_name)))           as user_name
+    count(eval(isnotnull(user_normalized)))     as user_normalized
+    count(eval(isnotnull(user_email)))          as user_email
+    count(eval(isnotnull(user_identity)))       as user_identity
+    count(eval(isnotnull(user_first)))          as user_first
+    count(eval(isnotnull(user_last)))           as user_last
+    count(eval(isnotnull(user_nick)))           as user_nick
+
+    count(eval(isnotnull(host)))                as host
+    count(eval(isnotnull(hostname)))            as hostname
+    count(eval(isnotnull(dest)))                as dest
+    count(eval(isnotnull(dvc)))                 as dvc
+    count(eval(isnotnull(dest_nt_host)))        as dest_nt_host
+    count(eval(isnotnull(src_nt_host)))         as src_nt_host
+    count(eval(isnotnull(ComputerName)))        as ComputerName
+    count(eval(isnotnull('alert.target.hostname'))) as alert_target_hostname
+
+    count(eval(isnotnull(src_ip)))              as src_ip
+    count(eval(isnotnull(dest_ip)))             as dest_ip
+    count(eval(isnotnull(dvc_ip)))              as dvc_ip
+    count(eval(isnotnull(src)))                 as src_ip_alt
+
+    count(eval(isnotnull(domain)))              as domain
+    count(eval(isnotnull(url_domain)))          as url_domain
+    count(eval(isnotnull(http_host)))           as http_host
+
+    count(eval(isnotnull(url)))                 as url
+    count(eval(isnotnull(uri)))                 as uri
+    count(eval(isnotnull(uri_path)))            as uri_path
+
+    count(eval(isnotnull(file_hash)))           as file_hash
+    count(eval(isnotnull(file_hash_sha256)))    as file_hash_sha256
+    count(eval(isnotnull(process_hash)))        as process_hash
+
+    count(eval(isnotnull(risk_object)))         as risk_object
+
+Risk datamodel entity drilldown base search
+	•	A “fuzzy entity lookback” using Risk.All_Risk data model 
+| from datamodel:"Risk.All_Risk"
+| eval source = search_name
+| lookup RIR-Deduplicate.csv _time risk_object source risk_score OUTPUT alert
+| search alert!="no"
+| eval _entity = trim(lower("$tok_entity$"))
+
+| eval _m_user = lower(coalesce(
+    user,
+    src_user,
+    dest_user,
+    identity,
+    user_name,
+    user_normalized,
+    user_email,
+    user_identity,
+    user_first,
+    user_last,
+    user_nick
+))
+
+| eval _m_host = lower(coalesce(
+    host,
+    hostname,
+    dest,
+    dvc,
+    dest_nt_host,
+    src_nt_host,
+    ComputerName,
+    'alert.target.hostname'
+))
+
+| eval _m_ip = coalesce(
+    src_ip,
+    dest_ip,
+    dvc_ip,
+    src
+)
+
+| eval _m_mail = lower(coalesce(
+    user_email,
+    src_user_email,
+    dest_user_email,
+    recipients,
+    sender
+))
+
+| eval _m_dom = lower(coalesce(
+    domain,
+    url_domain,
+    http_host
+))
+
+| eval _m_url = coalesce(
+    url,
+    uri,
+    uri_path
+)
+
+| eval _m_hash = coalesce(
+    file_hash,
+    file_hash_sha256,
+    process_hash
+)
+
+| eval _m_risk = lower(risk_object)
+
+| eval _is_ip_entity = if(match(_entity,"^(\\d{1,3}\\.){3}\\d{1,3}$"),1,0)
+
+| eval hit = if(
+    _m_user=_entity
+    OR _m_host=_entity
+    OR _m_ip=_entity
+    OR _m_mail=_entity
+    OR _m_dom=_entity
+    OR like(_m_url,"%". _entity ."%")
+    OR _m_hash=_entity
+    OR _m_risk=_entity
+    OR (_is_ip_entity=1 AND cidrmatch(_entity,tostring(_m_ip))),
+    1,
+    0
+)
+
+| where hit=1
+
+Drilldown example:
+
+| table _time risk_object risk_score search_name annotations.mitre_attack.mitre_tactic annotations.mitre_attack.mitre_technique _m_user _m_host _m_ip _m_mail _m_dom _m_url _m_hash
+| sort -_time
+
+| eval series="Detections"
+| fields _time series
+| append [
+    | inputlookup RIR-Deduplicate.csv
+    | eval _entity=trim(lower("$tok_entity$"))
+    | where len(_entity) > 0
+    | fillnull value="yes" alert
+    | where alert="no" AND lower(risk_object)=_entity
+    | eval series="Suppressed"
+    | fields _time series
+]
+| timechart span=1d count by series useother=false
