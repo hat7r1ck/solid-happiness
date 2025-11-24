@@ -1,1 +1,6 @@
 bgg
+| makeresults
+| eval has_user_token = len(coalesce("$tok_user_from_host$","")) > 0 
+| where NOT has_user_token
+| eval message = "No user selected. Click a row in Host Information, using 'Last Logged in User' or 'Assigned User ID', to populate User Identity."
+| table message
