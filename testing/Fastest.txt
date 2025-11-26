@@ -1,6 +1,26 @@
-bgg
 | makeresults
-| eval has_user_token = len(coalesce("$tok_user_from_host$","")) > 0 
-| where NOT has_user_token
-| eval message = "No user selected. Click a row in Host Information, using 'Last Logged in User' or 'Assigned User ID', to populate User Identity."
-| table message
+| eval entity = trim("$tok_entity$")
+| where len(entity) > 0
+| eval msg = "Investigation entity: " . entity
+| table msg
+
+
+| makeresults
+| eval entity = trim("$tok_entity$")
+| where len(entity) = 0
+| eval msg = "No investigation entity selected. Enter a value in Investigation Entity to start the lookback."
+| table msg
+
+
+| makeresults
+| eval host_user = trim("$tok_user_from_hosts$")
+| where len(host_user) > 0
+| eval msg = "Searching identity records for user: " . host_user
+| table msg
+
+
+| makeresults
+| eval host_user = trim("$tok_user_from_hosts$")
+| where len(host_user) = 0
+| eval msg = "No host linked user selected. Click a user value in Host Details to load identity information."
+| table msg
