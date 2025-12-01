@@ -1,23 +1,9 @@
-from datamodel:"Risk.All_Risk"
-| eval source = search_name
-| lookup RIR-Deduplicate.csv _time risk_object source risk_score OUTPUT alert
-| eval _entity = trim(lower("$tok_entity$"))
-| where len(_entity) > 0
-
-| eval _m_user = lower(coalesce(user, src_user, dest_user, identity, user_name, user_normalized, user_email))
-| eval _m_host = lower(coalesce(host, hostname, dest, dvc, dest_nt_host, src_nt_host, ComputerName, 'alert.target.hostname'))
-| eval _m_ip = coalesce(src_ip, dest_ip, dvc_ip, src)
-| eval _m_mail = lower(user_email)
-| eval _m_risk = lower(risk_object)
-| eval _is_ip_entity = if(match(_entity, "^(\\d{1,3}\\.){3}\\d{1,3}$"), 1, 0)
-| eval hit = if(_m_user = _entity OR _m_host = _entity OR _m_ip = _entity OR _m_mail = _entity OR _m_risk = _entity OR (_is_ip_entity = 1 AND cidrmatch(_entity, tostring(_m_ip))), 1, 0)
-| where hit = 1
-| where isnotnull(annotations.mitre_ta)
-| fields _time risk_object source annotations.mitre_ta
-
-| stats count by annotations.mitre_ta
-| lookup mitre_enterprise_list.csv TacticId as annotations.mitre_ta OUTPUT Tactic
-| eval Tactic = coalesce(Tactic, annotations.mitre_ta)
-| fields - annotations.mitre_ta
-| rename Tactic as "MITRE Tactic", count as "Event Count"
-| sort - "Event Count"
+| where isnotnull(annotations)
+| rex field=annotations "mitre_ta\":\[\"(?<tactic_id>TA\d+)\""
+| where isnotnull(tactic_id)
+| stats count by tactic_id
+| lookup mitre_enterprise_list.csv TacticId as tactic_id OUTPUT Tactic
+| eval Tactic = coalesce(Tactic, tactic_id)
+| fields - tactic_id
+| rename Tactic as "MITRE Tactic"
+| sort - count
