@@ -1,9 +1,89 @@
-| where isnotnull(annotations)
-| rex field=annotations "mitre_ta\":\[\"(?<tactic_id>TA\d+)\""
-| where isnotnull(tactic_id)
-| stats count by tactic_id
-| lookup mitre_enterprise_list.csv TacticId as tactic_id OUTPUT Tactic
-| eval Tactic = coalesce(Tactic, tactic_id)
-| fields - tactic_id
-| rename Tactic as "MITRE Tactic"
-| sort - count
+| from datamodel:"Risk.All_Risk"
+| eval source = search_name
+| lookup RIR-Deduplicate.csv _time risk_object source risk_score OUTPUT alert
+
+| eval _entity_raw = lower(trim("$tok_entity$"))
+
+| eval _entity_user = mvindex(split(_entity_raw,"@"),0)
+| eval _entity_user = mvindex(split(_entity_user,"\\"),-1)
+
+| eval _entity_core = case(
+    match(_entity_user,"^[a-z][0-9]{4,10}$"),
+        replace(_entity_user,"^.*([a-z][0-9]{4,10})$","\1"),
+    like(_entity_user,"%.%"),
+        lower(replace(_entity_user,"[0-9]+$","")),
+    1=1,
+        _entity_user
+)
+
+| eval _m_user = lower(coalesce(
+    user,
+    src_user,
+    dest_user,
+    identity,
+    user_name,
+    user_normalized,
+    user_email
+))
+
+| eval _m_user_user = mvindex(split(_m_user,"@"),0)
+| eval _m_user_user = mvindex(split(_m_user_user,"\\"),-1)
+
+| eval _m_user_core = case(
+    match(_m_user_user,"^[a-z][0-9]{4,10}$"),
+        replace(_m_user_user,"^.*([a-z][0-9]{4,10})$","\1"),
+    like(_m_user_user,"%.%"),
+        lower(replace(_m_user_user,"[0-9]+$","")),
+    1=1,
+        _m_user_user
+)
+
+| eval _m_host = lower(coalesce(
+    host,
+    hostname,
+    dest,
+    dvc,
+    dest_nt_host,
+    src_nt_host,
+    ComputerName,
+    'alert.target.hostname'
+))
+
+| eval _m_ip   = coalesce(src_ip, dest_ip, dvc_ip, src)
+| eval _m_mail = lower(coalesce(user_email, src_user_email, dest_user_email, recipients, sender))
+| eval _m_dom  = lower(coalesce(domain, url_domain, http_host))
+| eval _m_url  = coalesce(url, uri, uri_path)
+| eval _m_hash = coalesce(file_hash, file_hash_sha256, process_hash)
+| eval _m_risk = lower(risk_object)
+
+| eval _is_ip_entity = if(match(_entity_raw,"^(\\d{1,3}\\.){3}\\d{1,3}$"),1,0)
+
+| eval hit = if(
+      _m_user_core=_entity_core
+      OR _m_user=_entity_raw
+      OR _m_host=_entity_raw
+      OR _m_ip=_entity_raw
+      OR _m_mail=_entity_raw
+      OR _m_dom=_entity_raw
+      OR like(_m_url,"%". _entity_raw ."%")
+      OR _m_hash=_entity_raw
+      OR _m_risk=_entity_raw
+      OR (_is_ip_entity=1 AND cidrmatch(_entity_raw,tostring(_m_ip))),
+      1,
+      0
+)
+
+| where hit=1
+
+| eval time_str = strftime(_time,"%Y-%m-%d %H:%M:%S")
+| table time_str risk_object source alert risk_score user host src dest summary
+| rename time_str   as "Time",
+         risk_object as "Risk Object",
+         source      as "Risk Rule",
+         alert       as "Alert Flag",
+         risk_score  as "Risk Score",
+         user        as "User",
+         host        as "Host",
+         src         as "Src",
+         dest        as "Dest",
+         summary     as "Summary"
