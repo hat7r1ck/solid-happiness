@@ -1,46 +1,29 @@
-| eval prefix = mvindex(split(source," - "),0)
+| eval detection_time = _time
+| eval rule_name        = coalesce(risk_message, rule_title, search_name)
+| eval rule_description = coalesce(description, "N/A")
+| eval alert_status     = "Alerted"
 
-| eval primary_IOC = case(
-    /* Identity rules – identity centric */
-    prefix="Identity",
-        coalesce(user_email, user_normalized, risk_object, user, src_user, dest_user),
+| append [
+    | inputlookup RIR-Deduplicate.csv
+    | eval _entity = trim(lower("$tok_entity$"))
+    | where len(_entity) > 0 
+        AND alert="no" 
+        AND lower(risk_object)=_entity
+    | eval detection_time   = _time
+    | eval rule_name        = search_name
+    | eval rule_description = "Suppressed by deduplication"
+    | eval alert_status     = "Suppressed"
+    | fields detection_time risk_object source alert risk_score rule_name rule_description alert_status
+]
 
-    /* Access rules – auth / sign-in centric */
-    prefix="Access",
-        coalesce(src, src_ip, dest_ip, dest, user, src_user, dest_user, risk_object),
+| eval detection_time = strftime(detection_time,"%Y-%m-%d %H:%M:%S UTC")
 
-    /* Endpoint rules – process / file centric */
-    prefix="Endpoint",
-        coalesce(process_command_line, CommandLine, process_cmdline, cmdline,
-                 file_hash_sha256, file_hash, process_hash,
-                 file_path, TargetFileName),
-
-    /* Network rules – URL / DNS / IP centric */
-    prefix="Network",
-        coalesce(url, uri, uri_path, http_url,
-                 url_domain, dest_dns,
-                 dest_ip, src_ip),
-
-    /* Audit rules – usually user or object the audit touches */
-    prefix="Audit",
-        coalesce(user, src_user, dest_user, user_email, risk_object),
-
-    /* Threat rules – generic catch-all, prefer file / URL / IP */
-    prefix="Threat",
-        coalesce(file_hash_sha256, file_hash, process_hash,
-                 url, uri, uri_path, http_url,
-                 url_domain, dest_dns,
-                 dest_ip, src_ip,
-                 risk_object),
-
-    /* Fallback for anything weird */
-    1=1,
-        coalesce(file_hash_sha256, file_hash, process_hash,
-                 url, uri, uri_path,
-                 dest_ip, src_ip,
-                 user_email, user, src_user, dest_user,
-                 risk_object)
-)
-
-| eval primary_IOC = if(isnull(primary_IOC) OR primary_IOC="",
-                        "No clear IOC in event", primary_IOC)
+| table detection_time risk_object source alert_status risk_score rule_name rule_description
+| rename detection_time as "Detection Time",
+         risk_object    as "Risk Object",
+         source         as "Risk Rule",
+         alert_status   as "Alert Status",
+         risk_score     as "Risk Score",
+         rule_name      as "Rule",
+         rule_description as "Rule Description"
+| sort - "Detection Time"
