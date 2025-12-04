@@ -75,15 +75,37 @@
 
 | where hit=1
 
+| eval src_l     = lower(coalesce(source,""))
+| eval annot_str = tostring(annotations)
+
+| eval primary_IOC = case(
+    like(src_l,"%email%") OR like(annot_str,"%phish%") OR like(annot_str,"%mail%"),
+        coalesce(sender, user_email, src_user_email, dest_user_email, recipients),
+    like(src_l,"%endpoint%") OR like(src_l,"%edr%") OR like(annot_str,"%process%") OR like(annot_str,"%cmdline%"),
+        coalesce(process_command_line, CommandLine, process_cmdline, cmdline, file_hash_sha256, file_hash, process_hash),
+    like(src_l,"%proxy%") OR like(src_l,"%web%") OR like(src_l,"%url%") OR like(annot_str,"%url%"),
+        coalesce(url, uri, uri_path, http_url, url_domain, dest_dns, dest_ip),
+    1=1,
+        coalesce(
+            file_hash_sha256, file_hash, process_hash, hash,
+            url, uri, uri_path, http_url,
+            sender, user_email, src_user_email, dest_user_email,
+            dest_ip, src_ip,
+            risk_object
+        )
+)
+
+| eval primary_IOC = if(isnull(primary_IOC) OR primary_IOC="", "No clear IOC in event", primary_IOC)
+
 | eval time_str = strftime(_time,"%Y-%m-%d %H:%M:%S")
-| table time_str risk_object source alert risk_score user host src dest summary
+| table time_str risk_object source alert risk_score primary_IOC user host src dest
 | rename time_str   as "Time",
          risk_object as "Risk Object",
          source      as "Risk Rule",
          alert       as "Alert Flag",
          risk_score  as "Risk Score",
+         primary_IOC as "Primary IOC",
          user        as "User",
          host        as "Host",
          src         as "Src",
-         dest        as "Dest",
-         summary     as "Summary"
+         dest        as "Dest"
