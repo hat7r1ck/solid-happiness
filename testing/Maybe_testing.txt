@@ -1,1 +1,67 @@
-hell world
+
+
+Key Optimizations Made
+ * Filter Early: We keep the regex and rex filtering high up. Splunk is much faster when it discards non-matching events before doing complex eval calculations.
+ * Streaming vs. Transforming: eval and rex are streaming commands (fast), while stats is a transforming command. By moving stats to the end, we group the data efficiently.
+ * Replacing table with stats: As noted in your notes, stats is significantly faster because it doesn't try to keep every individual event in memory; it aggregates them based on your unique identifiers (projectid, input_hash).
+ * Deduplication via Aggregation: Using values() or first() inside stats allows you to see all unique findings for a specific input without seeing 3,000 duplicate rows.
+Optimized Splunk Query
+index=cloud_long sourcetype="google:gcp:pubsub" 
+    jsonPayload.sanitizationResult.sanitizationVerdict=MODEL_ARMOR_SANITIZATION_VERDICT_ALLOW 
+    jsonPayload.operationType=SANITIZE_MODEL_RESPONSE 
+    jsonPayload.sanitizationResult.sanitizationVerdictReason="*SDP*"
+    logName="*AITACG*"
+| fields _time logName jsonPayload.sanitizationResult.sanitizationVerdictReason jsonPayload.sanitizationInput.text
+
+| rename jsonPayload.sanitizationInput.text as InputText
+
+| rex field=logName "(?<project>[^/]+)"
+| rex field=project "(?:[^-]+-){2}(?<projectid>[^-]+)"
+
+| rex max_match=0 field=InputText "(?x)
+    (?<ssn>\b(?![000|666|9\d\d])\d{3}[- ]?(?![00])\d{2}[- ]?(?![0000])\d{4}\b)
+    | (?<ccn>\b(?:\d[ -]?){13,19}\b)
+    | (?<itin>\b9\d{2}[- ]?(?:7[0-9]|8[0-8]|9[0-2]|9[4-9])[- ]?(?![0000])\d{4}\b)
+    | (?<fan>\b\d{9}\b)
+    | (?<gcp_api_key>\bAIza[0-9A-Za-z\-_]{35}\b)
+    | (?<gcp_email>\b[a-z0-9\-\.]+@[a-z0-9\-]+\.iam\.gserviceaccount\.com\b)
+    | (?<access_token>\bya29\.[0-9A-Za-z\-_]+\b)
+    | (?<refresh_token>\b1\/\/ [0-9A-Za-z\-_]+\b)
+    | (?<private_key_id>\"private_key_id\"\s*:\s*\"[a-f0-9]{40}\")"
+
+| eval matches=mvappend(
+    if(isnotnull(ssn),"SSN",null()),
+    if(isnotnull(itin),"ITIN",null()),
+    if(isnotnull(ccn),"CCN",null()),
+    if(isnotnull(fan),"FAN",null()),
+    if(isnotnull(gcp_api_key),"GCP_API_KEY",null()),
+    if(isnotnull(gcp_email),"GCP_EMAIL",null()),
+    if(isnotnull(access_token),"ACCESS_TOKEN",null()),
+    if(isnotnull(refresh_token),"REFRESH_TOKEN",null()),
+    if(isnotnull(private_key_id),"PRIVATE_ID_KEY",null())
+  )
+| eval matches=mvfilter(isnotnull(matches))
+| where mvcount(matches)>0
+
+| eval input_hash=md5(InputText)
+
+| stats 
+    count as event_count 
+    earliest(_time) as first_seen 
+    latest(_time) as last_seen 
+    values(matches) as match_types
+    values(ssn) as ssns
+    values(ccn) as ccns
+    values(gcp_api_key) as api_keys
+    first(InputText) as sample_InputText
+    by projectid input_hash
+| convert ctime(first_seen) ctime(last_seen)
+| sort - event_count
+
+Improvements to the Logic
+ * The Regex: I noticed the Regex in the image uses (?x) (extended mode). This is good for readability, but ensure that the pipes (|) are correctly placed. I've cleaned up the spacing slightly to ensure Splunk parses them as distinct OR branches.
+ * Project ID Extraction: Using rex on the logName is usually more reliable than split if the string length varies. I've included a regex-based extraction that looks for the third segment of the project string.
+ * The values() function: In the stats command, I swapped first() for values(). If the same input text appears across different logs but captures slightly different metadata, values() will show you all unique findings for that specific text hash.
+ * Timestamp Conversion: Added convert ctime so your first_seen and last_seen are human-readable dates rather than Unix epochs.
+Would you like me to help refine the regex patterns for any of these specific PII types, or perhaps add a calculation to show the "Risk Level" based on which matches were found?
+
