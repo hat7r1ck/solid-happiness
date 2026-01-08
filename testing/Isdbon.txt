@@ -10,3 +10,23 @@ fetch('/system/config', { credentials: 'include' })
     console.log("raw sysConf keys:", Object.keys(c).sort());
   })
   .catch(e => console.error(e));
+
+
+
+
+(async () => {
+  const r = await fetch('/system/config', { credentials: 'include' });
+  const j = await r.json();
+  const c = j?.sysConf || {};
+
+  const hits = (needle) => Object.keys(c).filter(k => k.toLowerCase().includes(needle)).sort();
+
+  console.log("HTTP", r.status, r.statusText);
+  console.log("sysConf keys:", Object.keys(c).length);
+
+  console.log("keys containing 'index':", hits("index"));
+  console.log("keys containing 'entry':", hits("entry"));
+  console.log("keys containing 'war':", hits("war"));
+  console.log("keys containing 'elastic':", hits("elastic"));
+  console.log("keys containing 'bolt':", hits("bolt"));
+})();
