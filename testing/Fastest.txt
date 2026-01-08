@@ -1,1 +1,131 @@
-g
+
+
+File 1: 1_power_query_code.txt
+Use this in Excel > Get Data > Blank Query to merge your 50+ files.
+let
+    // CONFIG: Update this path to your actual raw data folder
+    SourcePath = "C:\Users\YOUR_ID\Downloads\Raw_Data",
+    Source = Folder.Files(SourcePath),
+
+    // 1. FILTER & EXTRACT
+    #"Filtered Rows" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
+    
+    // Function to process each sheet (skips junk headers)
+    GetCleanTable = (BinaryContent) =>
+        let
+            FileContent = Excel.Workbook(BinaryContent),
+            Data = FileContent{0}[Data],
+            // Remove top rows if your report has logos/titles. Change '0' to '2' or '3' if needed.
+            RemoveTop = Table.Skip(Data, 0), 
+            PromoteHeaders = Table.PromoteHeaders(RemoveTop, [PromoteAllScalars=true])
+        in
+            PromoteHeaders,
+
+    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "CustomContent", each GetCleanTable([Content])),
+    #"Expanded CustomContent" = Table.ExpandTableColumn(#"Added Custom", "CustomContent", 
+        Table.ColumnNames(Table.Combine(#"Added Custom"[CustomContent]))),
+
+    // 2. RENAMING (Standardize bad headers)
+    #"Renamed Columns" = Table.RenameColumns(#"Expanded CustomContent",{
+        {"Time to Ack", "MTTA"}, {"Time to Process", "MTTP"}, {"Avg Handle Time", "MTTP"},
+        {"Alert Count", "Volume"}, {"Total Cases", "Volume"},
+        {"Tier", "Tier"},
+        {"Created", "Date"}, {"Log Date", "Date"}, {"Timestamp", "Date"}
+    }, MissingField.Ignore),
+
+    // 3. THE "NUCLEAR" DATE FIX (Forces mixed formats to valid Date)
+    #"Fix Date Format" = Table.TransformColumns(#"Renamed Columns",{
+        {"Date", each 
+            if Value.Is(_, type date) then _ 
+            else if Value.Is(_, type datetime) then DateTime.Date(_)
+            else try Date.From(Text.BeforeDelimiter(Text.From(_), " ")) otherwise null,
+            type date}
+    }),
+
+    // 4. CLEANUP & TYPES
+    #"Filtered Rows1" = Table.SelectRows(#"Fix Date Format", each [Date] <> null),
+    
+    // Add "Hour" column for Heatmaps
+    #"Added Hour" = Table.AddColumn(#"Filtered Rows1", "Hour", each Time.Hour(DateTime.From([Date]))),
+
+    #"Selected Columns" = Table.SelectColumns(#"Added Hour",{"Date", "Hour", "Volume", "MTTA", "MTTP", "Tier", "Staffing"}),
+    
+    #"Final Types" = Table.TransformColumnTypes(#"Selected Columns",{
+        {"Volume", Int64.Type}, {"MTTA", type number}, {"MTTP", type number}, {"Staffing", Int64.Type}, {"Hour", Int64.Type}
+    })
+in
+    #"Final Types"
+
+File 2: 2_engine_formulas.md
+The math layer. Copy these formulas into your _ENGINE tab.
+Dashboard Logic & Math
+A. Burnout (Utilization Rate)
+Concept: (Work Required) / (Staff Available).
+ * Target: < 70% | Burnout: > 85%
+ * Excel Formula:
+   = ( [Volume_Cell] * [MTTP_Minutes_Cell] ) / ( [Staff_Count_Cell] * 8 * 60 * 0.8 )
+
+   (Note: 0.8 represents 80% efficiency factor).
+B. Kingman Equation (Predicted Wait Time)
+Concept: Predicts exponential wait times based on utilization. Use this as a dashed line on the chart.
+ * Excel Formula:
+   = ( [Utilization_Cell] / (1 - [Utilization_Cell]) ) * ( [MTTP_Minutes_Cell] / 2 )
+
+C. Interactive Toggle Logic
+Concept: Returns #N/A if the checkbox is False, hiding the line on the chart.
+ * Volume Formula:
+   =IF($B$1=TRUE, SUMIFS(_DATA!C:C, _DATA!A:A, A4), NA())
+
+ * Holiday Flag (Red Bar):
+   =IF(AND($F$1=TRUE, ISNUMBER(MATCH(A4, Holidays_List[Date], 0))), B4, NA())
+
+File 3: 3_visuals_build_guide.md
+The construction steps for the Charts and Heatmaps.
+Visualization Build Guide
+1. The "Morgan Vision" (Main Combo Chart)
+ * Chart Type: Combo Chart.
+ * Series 1 (Bars): Volume (Color: Dark Blue).
+ * Series 2 (Area): Staff Capacity (Color: Light Gray).
+   * Calc: Staff_Count * Max_Cases_Per_Shift.
+ * Series 3 (Line - Secondary Axis): MTTA (Color: Neon Green).
+ * Series 4 (Line - Secondary Axis): Kingman_Prediction (Color: Dashed Orange).
+ * Series 5 (Stacked Column): Holiday_Flag (Color: Bright Red).
+2. The Burnout Tracker (Tier 1 vs Tier 2)
+ * Chart Type: Clustered Column + Line.
+ * Bars: Daily Utilization % for Tier 1.
+ * Line: Constant line at 85% (The "Red Line").
+3. The Staffing Heatmap
+ * Pivot Table:
+   * Rows: Hour (0-23).
+   * Columns: Day_Name (Mon-Sun).
+   * Values: Average of Volume.
+ * Format: Conditional Formatting > Color Scales > Red-White-Blue.
+4. Regression Scatter Plot
+ * X-Axis: Volume | Y-Axis: MTTA.
+ * Add Trendline: Linear. Check "Display R-Squared".
+File 4: 4_ui_polish.md
+The aesthetic instructions for the "Executive" look.
+UI & Protection Guide
+1. The "Control Ribbon"
+ * Style: Dark Gray background row at the top.
+ * Toggle Buttons:
+   * Create cells with Blue Background / White Text: "SHOW VOLUME".
+   * Insert a Checkbox -> Delete the text label -> Resize small.
+   * Drag the empty checkbox on top of the Blue Cell.
+   * Link it to the _ENGINE tab (e.g., Cell B1).
+2. Time Control
+ * Slicer: Insert Timeline Slicer connected to your Pivots.
+ * Style: Set Slicer style to "Dark".
+3. "Baby Locks" (Protection)
+ * Unlock Controls: Right-click Checkboxes & Slicers > Format > Properties > Uncheck "Locked".
+ * Hide Distractions: Hide Columns O:XFD and Rows 50+.
+ * Protect Sheet: Review > Protect Sheet.
+   * Allow: Select Unlocked Cells, Use PivotTable.
+   * Disallow: Select Locked Cells.
+Execution Order (Monday Morning)
+ * Pull these files to your work machine.
+ * Run the Power Query code (File 1) to clean your data.
+ * Setup the _ENGINE tab with formulas (File 2).
+ * Build the Visuals (File 3).
+ * Apply the UI Polish (File 4).
+
