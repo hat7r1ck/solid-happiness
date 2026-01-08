@@ -1,0 +1,12 @@
+fetch('/system/config', { credentials: 'include' })
+  .then(r => r.json())
+  .then(j => {
+    const c = j?.sysConf || {};
+    console.table({
+      "DB.IndexEntryContent": c["DB.IndexEntryContent"],
+      "db.index.entry.disable": c["db.index.entry.disable"],
+      "granular.index.entries": c["granular.index.entries"] ?? c["granular.index"]?.["entries"],
+    });
+    console.log("raw sysConf keys:", Object.keys(c).sort());
+  })
+  .catch(e => console.error(e));
