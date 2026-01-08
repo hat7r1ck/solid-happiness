@@ -30,3 +30,9 @@ fetch('/system/config', { credentials: 'include' })
   console.log("keys containing 'elastic':", hits("elastic"));
   console.log("keys containing 'bolt':", hits("bolt"));
 })();
+
+
+
+| regex _raw="(?i)common-entry|entry index|index entries|entries index|reindex|restore|index_not_found|search_phase_execution|cluster_block|no such index"
+| table _time host _raw
+| sort - _time
