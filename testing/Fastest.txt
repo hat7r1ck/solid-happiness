@@ -1,95 +1,98 @@
 let
-    // CONFIG: Update this path to your actual folder
+    // CONFIG
     SourcePath = "C:\Users\Morgan\Downloads\Raw_Data",
     Source = Folder.Files(SourcePath),
 
-    // 1. FILTER to Excel files only
+    // 1. FILTER
     #"Filtered Rows" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
 
-    // --- SMART SHEET SELECTION FUNCTION ---
-    GetLastSheet = (BinaryContent) =>
+    // --- "TAB HUNTER" FUNCTION (With U# Protection) ---
+    GetBestSheet = (BinaryContent) =>
         let
             WorkbookContent = Excel.Workbook(BinaryContent),
-            
-            // Filter to only real Sheets (ignores Tables/Ranges)
             OnlySheets = Table.SelectRows(WorkbookContent, each [Kind] = "Sheet"),
             
-            // SAFETY FILTER: Remove common "Junk" tabs from the bottom of the list
-            // This ensures we don't accidentally grab a "Notes" tab if it's the last one.
-            RemoveJunkTabs = Table.SelectRows(OnlySheets, each not List.Contains({"Summary", "Notes", "Instructions", "Cover"}, [Name])),
+            // LEVEL 1: Aggressive Junk Removal
+            // Removes "Summary", "Notes", and the "U#" tabs you found
+            CleanSheets = Table.SelectRows(OnlySheets, each 
+                not List.Contains({"Summary", "Notes", "Instructions", "Cover"}, [Name]) 
+                and not Text.StartsWith([Name], "U#") 
+                and not (Text.StartsWith([Name], "U") and Text.Length([Name]) < 4) // Catches U1, U12
+            ),
             
-            // Grabs the last remaining sheet
-            TargetSheetRecord = Table.Last(RemoveJunkTabs),
+            // LEVEL 2: Hunter Tactics (Look for Good Keywords)
+            Hunter1 = Table.SelectRows(CleanSheets, each Text.Contains([Name], "Complete Data", Comparer.OrdinalIgnoreCase)),
+            Hunter2 = Table.SelectRows(CleanSheets, each Text.Contains([Name], "New Data", Comparer.OrdinalIgnoreCase)),
+            Hunter3 = Table.SelectRows(CleanSheets, each Text.Contains([Name], "Data", Comparer.OrdinalIgnoreCase)),
+            
+            // LEVEL 3: Decision
+            BestList = if not Table.IsEmpty(Hunter1) then Hunter1 
+                       else if not Table.IsEmpty(Hunter2) then Hunter2 
+                       else if not Table.IsEmpty(Hunter3) then Hunter3
+                       else CleanSheets, // Fallback to whatever is left
+            
+            // LEVEL 4: The Final Tie-Breaker (Longest Name Wins)
+            // If we are left with "Sheet1" and "Security_Export_Final", this picks the Export.
+            SortedByLength = Table.Sort(BestList, each Text.Length([Name]), Order.Descending),
+            TargetSheetRecord = if Table.IsEmpty(SortedByLength) then [Data=null, Name="ERROR_NO_SHEETS"] else SortedByLength{0},
+            
             TargetSheetData = TargetSheetRecord[Data],
-            TargetSheetName = TargetSheetRecord[Name], // Capture name for Audit
-            
-            // Promote Headers (assumes Row 1 is header)
             PromoteHeaders = Table.PromoteHeaders(TargetSheetData, [PromoteAllScalars=true]),
-            
-            // Tag the data with the Tab Name so you can Audit it later
-            AddSourceMeta = Table.AddColumn(PromoteHeaders, "Source_Tab_Used", each TargetSheetName)
+            AddSourceMeta = Table.AddColumn(PromoteHeaders, "Source_Tab_Used", each TargetSheetRecord[Name])
         in
             AddSourceMeta,
 
-    // Apply the function to every file
-    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "CustomContent", each GetLastSheet([Content])),
+    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "CustomContent", each GetBestSheet([Content])),
     
-    // --- DYNAMIC EXPANSION ---
-    // Scans ALL files to find EVERY column header exists. Prevents "Missing Column" errors.
+    // --- EXPAND ALL COLUMNS ---
     AllColumnNames = List.Distinct(List.Combine(List.Transform(#"Added Custom"[CustomContent], each Table.ColumnNames(_)))),
     #"Expanded CustomContent" = Table.ExpandTableColumn(#"Added Custom", "CustomContent", AllColumnNames),
 
-    // 2. RENAMING (Standardize - Add any other weird ones you see here)
+    // 2. SAFE RENAMING
     #"Renamed Columns" = Table.RenameColumns(#"Expanded CustomContent",{
         {"Time to Ack", "MTTA"}, {"Time to Process", "MTTP"}, 
         {"Alert Count", "Volume"}, {"Total Cases", "Volume"},
-        {"Tier", "Tier"}, 
-        {"Created", "Date"}, {"Log Date", "Date"}, {"Timestamp", "Date"}, {"Date Created", "Date"}
+        {"Tier", "Tier"},
+        // Date Variants
+        {"Occurred Date (UTC)", "Date_P1"}, {"Occurrd Date (UTC)", "Date_P1"}, 
+        {"Created (UTC)", "Date_P1"}, {"Timestamp", "Date_P1"},
+        {"Created Time (ET)", "Date_P2"}, {"Created", "Date_P2"}, {"Log Date", "Date_P2"}
     }, MissingField.Ignore),
 
-    // 3. THE "TITANIUM" DATE FIX (Final Version)
-    // Handles: ISO, Text, Timezones, AND Excel Serial Numbers
-    #"Fix Date Format" = Table.TransformColumns(#"Renamed Columns",{
-        {"Date", each 
-            // CASE 1: Already correct types
+    // 3. COALESCE DATES
+    #"Added Master Date" = Table.AddColumn(#"Renamed Columns", "Raw_Date_String", each 
+        if [Date_P1] <> null then [Date_P1] 
+        else if [Date_P2] <> null then [Date_P2] 
+        else null),
+
+    // 4. TITANIUM DATE PARSING
+    #"Fix Date Format" = Table.TransformColumns(#"Added Master Date",{
+        {"Raw_Date_String", each 
             if Value.Is(_, type date) then _ 
             else if Value.Is(_, type datetime) then DateTime.Date(_)
-            else if Value.Is(_, type datetimezone) then DateTime.Date(DateTimeZone.RemoveZone(_))
-            
-            // CASE 2: Excel Serial Numbers (e.g., 45302)
-            else if Value.Is(_, type number) then Date.From(_)
-            
-            // CASE 3: Text Parsing (The hard part)
+            else if Value.Is(_, type number) then Date.From(_) 
             else 
                 let
                     str = Text.From(_),
-                    // Check if it's ISO (Has a 'T' and a Zone?) -> Try DateTimeZone parsing
-                    attemptZone = try DateTime.Date(DateTimeZone.RemoveZone(DateTimeZone.From(str))) otherwise null,
-                    
-                    // If that fails, clean the string: Replace 'T' with space, split by space, take the first part
                     cleanStr = Text.SplitAny(Text.Replace(str, "T", " "), " "){0},
-                    attemptDate = try Date.From(cleanStr) otherwise null
+                    attempt1 = try Date.From(cleanStr) otherwise null,
+                    attempt2 = try Date.From(cleanStr, "en-GB") otherwise null
                 in
-                    if attemptZone <> null then attemptZone 
-                    else if attemptDate <> null then attemptDate 
-                    else null, // Last resort: it's truly garbage
+                    if attempt1 <> null then attempt1 
+                    else if attempt2 <> null then attempt2
+                    else null,
             type date}
     }),
 
-    // 4. CUT THE FAT
-    // Filter out rows where Date is null (usually footer totals or blank rows)
-    #"Filtered Rows1" = Table.SelectRows(#"Fix Date Format", each [Date] <> null),
-    
-    // Deduplicate the entire table
+    // 5. CLEANUP
+    #"Renamed Final Date" = Table.RenameColumns(#"Fix Date Format", {{"Raw_Date_String", "Date"}}),
+    #"Filtered Rows1" = Table.SelectRows(#"Renamed Final Date", each [Date] <> null),
     #"Removed Duplicates" = Table.Distinct(#"Filtered Rows1"),
     
-    // Ensure Key Metrics are Numbers (Prevents "Text stored as Number" errors)
-    #"Final Types" = Table.TransformColumnTypes(#"Removed Duplicates",{
-        {"Volume", Int64.Type}, 
-        {"MTTA", type number}, 
-        {"MTTP", type number},
-        {"Staffing", Int64.Type}
+    #"Selected Columns" = Table.SelectColumns(#"Removed Duplicates", {"Date", "Volume", "MTTA", "MTTP", "Tier", "Staffing"}),
+    
+    #"Final Types" = Table.TransformColumnTypes(#"Selected Columns",{
+        {"Volume", Int64.Type}, {"MTTA", type number}, {"MTTP", type number}, {"Staffing", Int64.Type}
     })
 in
     #"Final Types"
-
