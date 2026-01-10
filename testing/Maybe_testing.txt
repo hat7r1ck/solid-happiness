@@ -1,1 +1,87 @@
-jfjrn
+let
+    // 1. CONFIGURATION
+    SourcePath = "C:\Users\Morgan\Downloads\Raw_Data",
+    Source = Folder.Files(SourcePath),
+    #"Filtered Rows" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
+
+    // 2. TAB HUNTER (Prioritizes "Complete Data" based on your screenshots)
+    GetBestSheet = (BinaryContent) =>
+        let
+            WorkbookContent = Excel.Workbook(BinaryContent),
+            OnlySheets = Table.SelectRows(WorkbookContent, each [Kind] = "Sheet"),
+            
+            // Priority 1: Exact match for "Complete Data"
+            P1 = Table.SelectRows(OnlySheets, each Text.Contains([Name], "Complete Data", Comparer.OrdinalIgnoreCase)),
+            
+            // Priority 2: "Data"
+            P2 = Table.SelectRows(OnlySheets, each Text.Contains([Name], "Data", Comparer.OrdinalIgnoreCase)),
+            
+            // Decision
+            TargetSheetRecord = if not Table.IsEmpty(P1) then P1{0} 
+                                else if not Table.IsEmpty(P2) then P2{0}
+                                else Table.Last(OnlySheets), // Fallback to last tab
+            
+            TargetSheetData = TargetSheetRecord[Data],
+            PromoteHeaders = Table.PromoteHeaders(TargetSheetData)
+        in
+            PromoteHeaders,
+
+    // 3. EXPAND (Brings in ALL columns from the files)
+    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "CustomContent", each GetBestSheet([Content])),
+    AllColumnNames = List.Distinct(List.Combine(List.Transform(#"Added Custom"[CustomContent], each Table.ColumnNames(_)))),
+    #"Expanded CustomContent" = Table.ExpandTableColumn(#"Added Custom", "CustomContent", AllColumnNames),
+
+    // 4. SAFE RENAME (Matches the headers in your screenshots)
+    // We verify the column exists before renaming to prevent "Column Not Found" crashes.
+    TargetMap = {
+        // VISIBLE IN SCREENSHOTS -> DASHBOARD NAME
+        {"Occurred Date/Time (UTC)", "Date"},
+        {"Mean time to Acknowledge", "MTTA"}, 
+        {"Mean time to Close", "MTTP"},
+        {"roles", "Tier"},
+        {"Analyst", "Staff_User"},
+        {"severity", "Severity"},
+        // Fallbacks if header names vary slightly
+        {"Created Date/Time (UTC)", "Date_Backup"},
+        {"Time to Acknowledge", "MTTA_Backup"}
+    },
+    
+    // Logic to only rename what actually exists
+    CurrentCols = Table.ColumnNames(#"Expanded CustomContent"),
+    ValidRenames = List.Select(TargetMap, each List.Contains(CurrentCols, _{0})),
+    #"Renamed Columns" = Table.RenameColumns(#"Expanded CustomContent", ValidRenames),
+
+    // 5. DATE PARSING (Handles the '7/27/25 12:30 AM' format)
+    #"Added Clean Date" = Table.AddColumn(#"Renamed Columns", "Clean_Date", each 
+        let
+            // Pick primary or backup date
+            val = if List.Contains(Table.ColumnNames(#"Renamed Columns"), "Date") then [Date] 
+                  else if List.Contains(Table.ColumnNames(#"Renamed Columns"), "Date_Backup") then [Date_Backup] 
+                  else null,
+            
+            // Parse logic
+            parsed = if val = null then null 
+                     else if Value.Is(val, type date) then val 
+                     else if Value.Is(val, type datetime) then DateTime.Date(val)
+                     else try Date.From(val) otherwise null
+        in
+            parsed, type date),
+
+    // 6. DURATION CONVERSION (Converts '0:01:00' to '1.0' minutes)
+    // Excel cannot graph "Duration" objects easily, so we convert to Number of Minutes.
+    #"Added MTTA Mins" = Table.AddColumn(#"Added Clean Date", "MTTA_Mins", each 
+        if List.Contains(Table.ColumnNames(#"Added Clean Date"), "MTTA") and Value.Is([MTTA], type duration) 
+        then Duration.TotalMinutes([MTTA]) 
+        else null, type number),
+
+    #"Added MTTP Mins" = Table.AddColumn(#"Added MTTA Mins", "MTTP_Mins", each 
+        if List.Contains(Table.ColumnNames(#"Added MTTA Mins"), "MTTP") and Value.Is([MTTP], type duration) 
+        then Duration.TotalMinutes([MTTP]) 
+        else null, type number),
+
+    // 7. FINAL CLEANUP
+    // We keep ALL columns for audit, but ensure our main Date column is distinct
+    #"Removed Duplicates" = Table.Distinct(#"Added MTTP Mins", {"Clean_Date", "id"})
+in
+    #"Removed Duplicates"
+
