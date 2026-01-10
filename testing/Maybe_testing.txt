@@ -1,1 +1,76 @@
-ghf
+let
+    // 1. CONFIGURATION
+    SourcePath = "C:\Users\Morgan\Downloads\Raw_Data",
+    Source = Folder.Files(SourcePath),
+    #"Filtered Rows" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
+
+    // 2. TAB HUNTER (Targets "Complete Data" from your screenshots)
+    GetBestSheet = (BinaryContent) =>
+        let
+            WorkbookContent = Excel.Workbook(BinaryContent),
+            OnlySheets = Table.SelectRows(WorkbookContent, each [Kind] = "Sheet"),
+            
+            // Priority: "Complete Data" -> "Data" -> Last Sheet
+            P1 = Table.SelectRows(OnlySheets, each Text.Contains([Name], "Complete Data", Comparer.OrdinalIgnoreCase)),
+            P2 = Table.SelectRows(OnlySheets, each Text.Contains([Name], "Data", Comparer.OrdinalIgnoreCase)),
+            
+            TargetSheetRecord = if not Table.IsEmpty(P1) then P1{0} 
+                                else if not Table.IsEmpty(P2) then P2{0}
+                                else Table.Last(OnlySheets),
+            
+            TargetSheetData = TargetSheetRecord[Data],
+            PromoteHeaders = Table.PromoteHeaders(TargetSheetData)
+        in
+            PromoteHeaders,
+
+    // 3. STACK TABLES (Nuclear Option - No Expansion Crashes)
+    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "CustomContent", each GetBestSheet([Content])),
+    TableList = #"Added Custom"[CustomContent],
+    #"Combined Tables" = Table.Combine(TableList),
+
+    // 4. INTELLIGENT DATE PARSING
+    // We create a NEW column "Master_Date" without touching your originals.
+    // It prioritizes "Occurred Date/Time (UTC)" then falls back to "Created...".
+    #"Added Master Date" = Table.AddColumn(#"Combined Tables", "Master_Date", each 
+        let
+            // Safe Navigation: Check if column exists before grabbing it
+            val = if List.Contains(Table.ColumnNames(#"Combined Tables"), "Occurred Date/Time (UTC)") then [#"Occurred Date/Time (UTC)"]
+                  else if List.Contains(Table.ColumnNames(#"Combined Tables"), "Created Date/Time (UTC)") then [#"Created Date/Time (UTC)"]
+                  else null,
+            
+            // The Titanium Logic: Handles Text, Dates, and Datetimes
+            parsed = if val = null then null 
+                     else if Value.Is(val, type date) then val 
+                     else if Value.Is(val, type datetime) then DateTime.Date(val)
+                     else try Date.From(val) otherwise null
+        in
+            parsed, type date),
+
+    // 5. METRIC CONVERSION (Duration to Minutes)
+    // Targets "Mean time to Acknowledge" and "Mean time to Close" from your screenshots.
+    #"Added MTTA Mins" = Table.AddColumn(#"Added Master Date", "MTTA_Minutes", each 
+        if List.Contains(Table.ColumnNames(#"Combined Tables"), "Mean time to Acknowledge") 
+           and Value.Is([#"Mean time to Acknowledge"], type duration) 
+        then Duration.TotalMinutes([#"Mean time to Acknowledge"]) 
+        else null, type number),
+
+    #"Added MTTP Mins" = Table.AddColumn(#"Added MTTA Mins", "MTTP_Minutes", each 
+        if List.Contains(Table.ColumnNames(#"Combined Tables"), "Mean time to Close") 
+           and Value.Is([#"Mean time to Close"], type duration) 
+        then Duration.TotalMinutes([#"Mean time to Close"]) 
+        else null, type number),
+
+    // 6. FINAL POLISH
+    // We verify the Master_Date isn't null, but we DO NOT remove columns.
+    // We just move the Critical 3 columns to the front for easy reading.
+    #"Filtered Rows1" = Table.SelectRows(#"Added MTTP Mins", each [Master_Date] <> null),
+    
+    // Reorder: Put Calculated Fields First, followed by everything else (Junk included)
+    ExistingCols = Table.ColumnNames(#"Filtered Rows1"),
+    NewCols = {"Master_Date", "MTTA_Minutes", "MTTP_Minutes"},
+    OtherCols = List.Difference(ExistingCols, NewCols),
+    
+    #"Reordered Columns" = Table.ReorderColumns(#"Filtered Rows1", NewCols & OtherCols)
+in
+    #"Reordered Columns"
+
