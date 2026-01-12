@@ -1,1 +1,87 @@
-testing
+let
+    // 1. READ TABLE (Uses the table you just selected)
+    Source = Excel.CurrentWorkbook(){[Name="Table1"]}[Content], // IF ERROR: Change "Table1" to the actual name of your Excel table on the Shift tab
+    
+    // 2. FILTER FOR ACTIVE STAFF ONLY
+    #"Filtered Rows" = Table.SelectRows(Source, each ([Status] = "Active")),
+    
+    // 3. CALCULATE HOURS AVAILABLE PER DAY
+    // We scan the "Shift Days" column. If it says "Mon", we add that person's hours to Monday.
+    #"Added Mon" = Table.AddColumn(#"Filtered Rows", "Monday", each if Text.Contains([Shift Days], "Mon") then [Hours] else 0, type number),
+    #"Added Tue" = Table.AddColumn(#"Added Mon", "Tuesday", each if Text.Contains([Shift Days], "Tue") then [Hours] else 0, type number),
+    #"Added Wed" = Table.AddColumn(#"Added Tue", "Wednesday", each if Text.Contains([Shift Days], "Wed") then [Hours] else 0, type number),
+    #"Added Thu" = Table.AddColumn(#"Added Wed", "Thursday", each if Text.Contains([Shift Days], "Thu") then [Hours] else 0, type number),
+    #"Added Fri" = Table.AddColumn(#"Added Thu", "Friday", each if Text.Contains([Shift Days], "Fri") then [Hours] else 0, type number),
+    #"Added Sat" = Table.AddColumn(#"Added Fri", "Saturday", each if Text.Contains([Shift Days], "Sat") then [Hours] else 0, type number),
+    #"Added Sun" = Table.AddColumn(#"Added Sat", "Sunday", each if Text.Contains([Shift Days], "Sun") then [Hours] else 0, type number),
+
+    // 4. SUM TOTAL HOURS PER DAY (The Capacity Limit)
+    // This creates a simple reference table: Day Name | Total Hours
+    #"Calculated Sums" = Table.FromRecords({
+        [Day_Name = "Monday",    Total_Capacity_Hours = List.Sum(#"Added Sun"[Monday])],
+        [Day_Name = "Tuesday",   Total_Capacity_Hours = List.Sum(#"Added Sun"[Tuesday])],
+        [Day_Name = "Wednesday", Total_Capacity_Hours = List.Sum(#"Added Sun"[Wednesday])],
+        [Day_Name = "Thursday",  Total_Capacity_Hours = List.Sum(#"Added Sun"[Thursday])],
+        [Day_Name = "Friday",    Total_Capacity_Hours = List.Sum(#"Added Sun"[Friday])],
+        [Day_Name = "Saturday",  Total_Capacity_Hours = List.Sum(#"Added Sun"[Saturday])],
+        [Day_Name = "Sunday",    Total_Capacity_Hours = List.Sum(#"Added Sun"[Sunday])]
+    })
+in
+    #"Calculated Sums"
+
+
+next 
+let
+    // 1. POINTER TO YOUR MANUAL WORK
+    Source = #"Query1",
+
+    // 2. CREATE MASTER DATE & DAY NAME
+    #"Added Master Date" = Table.AddColumn(Source, "Master_Date", each 
+        try DateTime.Date([#"Created Date/Time (UTC)"]) otherwise null, type date),
+    
+    // We strictly use Day Name to link to your Staffing Table
+    #"Added Day Name" = Table.AddColumn(#"Added Master Date", "Day_Name", each 
+        Date.DayOfWeekName([#"Created Date/Time (UTC)"]), type text),
+
+    // 3. CALCULATE METRICS (Row Level)
+    #"Calc MTTA" = Table.AddColumn(#"Added Day Name", "MTTA_Minutes", each 
+        try Number.From([#"Mean time to Acknowledge"]) * 1440 otherwise null, type number),
+    #"Calc MTTP" = Table.AddColumn(#"Calc MTTA", "MTTP_Minutes", each 
+        try Number.From([#"Mean time to Close"]) * 1440 otherwise null, type number),
+    #"Calc Remediation" = Table.AddColumn(#"Calc MTTP", "Remediation_Minutes", each 
+        try Duration.TotalMinutes([#"Remediation Time (UTC)"] - [#"Created Date/Time (UTC)"]) otherwise null, type number),
+    #"Calc Complexity" = Table.AddColumn(#"Calc Remediation", "Is_Complex", each 
+        if [Escalation] <> null and [Escalation] <> "" then "Complex" else "Standard", type text),
+    #"Calc Hour" = Table.AddColumn(#"Calc Complexity", "Hour_Created", each Time.Hour([#"Created Date/Time (UTC)"]), Int64.Type),
+
+    // 4. MERGE STAFFING DATA (The Fix)
+    // We join your 'Staffing_Data' query on 'Day_Name' (e.g., Monday = Monday)
+    #"Merged Staffing" = Table.NestedJoin(#"Calc Hour", {"Day_Name"}, #"Staffing_Data", {"Day_Name"}, "StaffInfo", JoinKind.LeftOuter),
+    #"Expanded Staffing" = Table.ExpandTableColumn(#"Merged Staffing", "StaffInfo", {"Total_Capacity_Hours"}),
+
+    // 5. LEADERSHIP STATS (Daily Aggregation)
+    #"Grouped Daily" = Table.Group(#"Expanded Staffing", {"Master_Date"}, {
+        {"Daily_Volume", each Table.RowCount(_), Int64.Type},
+        {"Daily_Avg_MTTP", each List.Average([MTTP_Minutes]), type number},
+        // We take the max here because the capacity is the same for every row on that day
+        {"Daily_Capacity_Hours", each List.Max([Total_Capacity_Hours]), type number}
+    }),
+
+    // 6. CALCULATE UTILIZATION & KINGMAN
+    // Formula: (Volume * Avg Service Time in Hours) / Total Available Staff Hours
+    #"Calc Utilization" = Table.AddColumn(#"Grouped Daily", "Daily_Utilization", each 
+        if [Daily_Capacity_Hours] > 0 then 
+            ([Daily_Volume] * ([Daily_Avg_MTTP]/60)) / [Daily_Capacity_Hours] 
+        else 0, type number),
+
+    // Kingman Factor
+    #"Calc Kingman" = Table.AddColumn(#"Calc Utilization", "Kingman_Factor", each 
+        if [Daily_Utilization] >= 1 then 100 else [Daily_Utilization] / (1 - [Daily_Utilization]), type number),
+
+    // 7. MERGE BACK & FINALIZE
+    #"Merged Queries" = Table.NestedJoin(#"Expanded Staffing", {"Master_Date"}, #"Calc Kingman", {"Master_Date"}, "DailyStats", JoinKind.LeftOuter),
+    #"Expanded DailyStats" = Table.ExpandTableColumn(#"Merged Queries", "DailyStats", {"Daily_Volume", "Daily_Utilization", "Kingman_Factor"}),
+    #"Replaced Errors" = Table.ReplaceErrorValues(#"Expanded DailyStats", List.Transform(Table.ColumnNames(#"Expanded DailyStats"), each {_, null}))
+in
+    #"Replaced Errors"
+
