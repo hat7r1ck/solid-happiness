@@ -1,1 +1,73 @@
-hhhh
+let
+    // Update this path to your exact folder location
+    SourcePath = ,
+    Source = Folder.Files(SourcePath),
+    #"Filtered Files" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
+    
+    // Function to extract data from whichever sheet exists
+    GetData = (BinaryContent) =>
+        let
+            Workbook = Excel.Workbook(BinaryContent),
+            Sheet = if Table.Contains(Workbook, [Name="Complete Data"]) then Workbook{[Name="Complete Data"]}[Data] 
+                    else if Table.Contains(Workbook, [Name="Data"]) then Workbook{[Name="Data"]}[Data]
+                    else Workbook{0}[Data],
+            Headers = Table.PromoteHeaders(Sheet)
+        in
+            Headers,
+
+    #"Added Custom" = Table.AddColumn(#"Filtered Files", "ContentData", each GetData([Content])),
+    #"Combined Tables" = Table.Combine(#"Added Custom"[ContentData]),
+    
+    // Standardize the Date Column Name immediately
+    #"Standardized Date" = Table.RenameColumns(#"Combined Tables", {
+        {if Table.HasColumns(#"Combined Tables", "Occurred Date/Time (UTC)") then "Occurred Date/Time (UTC)" else "Created Date/Time (UTC)", "Raw_Date"}
+    })
+in
+    #"Standardized Date"
+
+let
+    // 1. Internal Staffing Load (Bypasses Firewall)
+    Source_Shifts = Excel.CurrentWorkbook(){[Name="Table1"]}[Content],
+    #"Active Staff" = Table.SelectRows(Source_Shifts, each ([Status] = "Active")),
+    
+    // Build Capacity Reference
+    Staffing_Ref = Table.FromRecords({
+        [Day_Name = "Monday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "M", each if Text.Contains([Shift Days], "Mon") then [Hours] else 0)[M])],
+        [Day_Name = "Tuesday",   Cap = List.Sum(Table.AddColumn(#"Active Staff", "T", each if Text.Contains([Shift Days], "Tue") then [Hours] else 0)[T])],
+        [Day_Name = "Wednesday", Cap = List.Sum(Table.AddColumn(#"Active Staff", "W", each if Text.Contains([Shift Days], "Wed") then [Hours] else 0)[W])],
+        [Day_Name = "Thursday",  Cap = List.Sum(Table.AddColumn(#"Active Staff", "Th", each if Text.Contains([Shift Days], "Thu") then [Hours] else 0)[Th])],
+        [Day_Name = "Friday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "F", each if Text.Contains([Shift Days], "Fri") then [Hours] else 0)[F])],
+        [Day_Name = "Saturday",  Cap = List.Sum(Table.AddColumn(#"Active Staff", "Sa", each if Text.Contains([Shift Days], "Sat") then [Hours] else 0)[Sa])],
+        [Day_Name = "Sunday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "Su", each if Text.Contains([Shift Days], "Sun") then [Hours] else 0)[Su])]
+    }),
+
+    // 2. Load and Clean Data
+    Source_Main = Alert_Pull,
+    #"Parsed Dates" = Table.AddColumn(Source_Main, "Master_Date", each 
+        let 
+            a1 = try Date.From([Raw_Date]) otherwise null,
+            a2 = if a1 = null then try Date.From(Number.From([Raw_Date])) otherwise null else a1
+        in a2, type date),
+    
+    #"Added DayName" = Table.AddColumn(#"Parsed Dates", "Day_Name", each Text.Trim(Date.DayOfWeekName([Master_Date])), type text),
+    #"Added Era" = Table.AddColumn(#"Added DayName", "System_Era", each if [Master_Date] >= #date(2025, 9, 1) then "Splunk" else "Chronicle"),
+
+    // 3. Metric Conversion (Handling nulls/text in Time columns)
+    #"Calc MTTP" = Table.AddColumn(#"Added Era", "MTTP_Mins", each 
+        try Number.From([#"Mean Time to Close"]) * 1440 otherwise 0, type number),
+
+    // 4. Merge and Aggregate
+    #"Merged Staff" = Table.NestedJoin(#"Calc MTTP", {"Day_Name"}, Staffing_Ref, {"Day_Name"}, "StaffInfo", JoinKind.LeftOuter),
+    #"Expanded Staff" = Table.ExpandTableColumn(#"Merged Staff", "StaffInfo", {"Cap"}),
+
+    #"Daily Group" = Table.Group(#"Expanded Staff", {"Master_Date", "System_Era"}, {
+        {"Daily_Volume", each Table.RowCount(_), Int64.Type},
+        {"Avg_MTTP", each List.Average([MTTP_Mins]), type number},
+        {"Staff_Capacity", each List.Max([Cap]), type number}
+    }),
+
+    // 5. Kingman Math
+    #"Utilization" = Table.AddColumn(#"Daily Group", "Util", each if [Staff_Capacity] > 0 then ([Daily_Volume] * ([Avg_MTTP]/60)) / [Staff_Capacity] else 0),
+    #"Kingman" = Table.AddColumn(#"Utilization", "Kingman", each if [Util] >= 0.98 then 100 else [Util] / (1 - [Util]))
+in
+    #"Kingman"
