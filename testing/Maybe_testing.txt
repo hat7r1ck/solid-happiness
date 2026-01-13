@@ -1,1 +1,118 @@
-test
+let
+    SourcePath = "C:\Users\k111609\Downloads\Raw_Data",
+    Source = Folder.Files(SourcePath),
+    #"Filtered Files" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
+    
+    GetData = (BinaryContent) =>
+        let
+            Workbook = Excel.Workbook(BinaryContent),
+            // Prioritize 'Complete Data', then 'Data', else Last Sheet
+            Sheet = if Table.Contains(Workbook, [Name="Complete Data"]) then Workbook{[Name="Complete Data"]}[Data] 
+                    else if Table.Contains(Workbook, [Name="Data"]) then Workbook{[Name="Data"]}[Data]
+                    else Table.Last(Table.SelectRows(Workbook, each [Kind]="Sheet"))[Data],
+            Headers = Table.PromoteHeaders(Sheet)
+        in
+            Headers,
+
+    #"Added Custom" = Table.AddColumn(#"Filtered Files", "ContentData", each GetData([Content])),
+    #"Combined Tables" = Table.Combine(#"Added Custom"[ContentData]),
+    
+    // Dynamic Header Search (Finds columns even if case changes)
+    ColNames = Table.ColumnNames(#"Combined Tables"),
+    
+    // 1. Date Column
+    DateCol = List.First(List.Select(ColNames, each Text.Contains(_, "Occurred Date") or Text.Contains(_, "Created Date"))),
+    
+    // 2. Remediate (The 1899 Column)
+    RemCol = List.First(List.Select(ColNames, each Text.Contains(_, "Mean time to Remediate", Comparer.OrdinalIgnoreCase))),
+    
+    // 3. Pickup/Acknowledge (The MTTP Column)
+    AckCol = List.First(List.Select(ColNames, each Text.Contains(_, "Mean time to Acknowledge", Comparer.OrdinalIgnoreCase))),
+
+    // Rename to standard names to prevent errors
+    #"Renamed Columns" = Table.RenameColumns(#"Combined Tables", {
+        {DateCol, "Raw_Date"},
+        {RemCol, "Raw_MTTR"},
+        {AckCol, "Raw_MTTP"} 
+    })
+in
+    #"Renamed Columns"
+
+
+let
+    // 1. STAFFING (Using 'shift' table)
+    Source_Shifts = Excel.CurrentWorkbook(){[Name="shift"]}[Content],
+    #"Active Staff" = Table.SelectRows(Source_Shifts, each ([Status] = "Active")),
+    
+    // Helper: Case-insensitive check to ensure Mon=mon matches
+    CheckDay = (shiftString, dayToFind) => 
+        if shiftString = null then 0 
+        else if Text.Contains(shiftString, dayToFind, Comparer.OrdinalIgnoreCase) then 1 
+        else 0,
+
+    Staffing_Ref = Table.FromRecords({
+        [Day_Name = "Monday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "X", each [Hours] * CheckDay([Shift Days], "Mon"))[X])],
+        [Day_Name = "Tuesday",   Cap = List.Sum(Table.AddColumn(#"Active Staff", "X", each [Hours] * CheckDay([Shift Days], "Tue"))[X])],
+        [Day_Name = "Wednesday", Cap = List.Sum(Table.AddColumn(#"Active Staff", "X", each [Hours] * CheckDay([Shift Days], "Wed"))[X])],
+        [Day_Name = "Thursday",  Cap = List.Sum(Table.AddColumn(#"Active Staff", "X", each [Hours] * CheckDay([Shift Days], "Thu"))[X])],
+        [Day_Name = "Friday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "X", each [Hours] * CheckDay([Shift Days], "Fri"))[X])],
+        [Day_Name = "Saturday",  Cap = List.Sum(Table.AddColumn(#"Active Staff", "X", each [Hours] * CheckDay([Shift Days], "Sat"))[X])],
+        [Day_Name = "Sunday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "X", each [Hours] * CheckDay([Shift Days], "Sun"))[X])]
+    }),
+
+    // 2. DATA LOAD
+    Source_Main = Alert_Pull,
+
+    // Fix Date Parsing (Safety Net for bad dates)
+    #"Parsed Dates" = Table.AddColumn(Source_Main, "Master_Date", each 
+        let 
+            val = [Raw_Date],
+            a1 = try Date.From(val) otherwise null,
+            a2 = if a1 = null then try Date.From(Number.From(val)) otherwise null else a1
+        in if a2 = null then #date(1900, 1, 1) else a2, type date),
+
+    // Filter out error dates (Year 1900) so they don't clutter the chart
+    #"Filtered Valid Dates" = Table.SelectRows(#"Parsed Dates", each [Master_Date] > #date(1900, 1, 1)),
+
+    #"Added DayName" = Table.AddColumn(#"Filtered Valid Dates", "Day_Name", each 
+        Text.Proper(Text.Trim(Date.DayOfWeekName([Master_Date]))), type text),
+        
+    #"Added Era" = Table.AddColumn(#"Added DayName", "System_Era", each if [Master_Date] >= #date(2025, 9, 1) then "Splunk" else "Chronicle"),
+
+    // 3. CALCULATE METRICS (The Fix: Multiply ONLY, No Subtraction)
+    #"Calc Metrics" = Table.AddColumn(#"Added Era", "Metrics", each [
+        // MTTR (Remediate) - The 1899 Column
+        MTTR = try Number.From([Raw_MTTR]) * 1440 otherwise 0,
+        // MTTP (Pickup/Acknowledge)
+        MTTP = try Number.From([Raw_MTTP]) * 1440 otherwise 0
+    ]),
+    
+    #"Expanded Metrics" = Table.ExpandRecordColumn(#"Calc Metrics", "Metrics", {"MTTR", "MTTP"}, {"MTTR_Mins", "MTTP_Mins"}),
+
+    // 4. MERGE & GROUP
+    #"Merged Staff" = Table.NestedJoin(#"Expanded Metrics", {"Day_Name"}, Staffing_Ref, {"Day_Name"}, "StaffInfo", JoinKind.LeftOuter),
+    #"Expanded Staff" = Table.ExpandTableColumn(#"Merged Staff", "StaffInfo", {"Cap"}),
+
+    #"Daily Group" = Table.Group(#"Expanded Staff", {"Master_Date", "System_Era"}, {
+        {"Daily_Volume", each Table.RowCount(_), Int64.Type},
+        {"Avg_MTTR", each List.Average([MTTR_Mins]), type number},
+        {"Avg_MTTP", each List.Average([MTTP_Mins]), type number}, // Pickup Time
+        {"Staff_Capacity", each List.Max([Cap]), type number}
+    }),
+
+    // Replace any null capacities with 0 to prevent div/0 errors
+    #"Cleaned Capacity" = Table.TransformColumns(#"Daily Group", {{"Staff_Capacity", each if _ = null then 0 else _, type number}}),
+
+    // 5. FINAL MATH
+    #"Utilization" = Table.AddColumn(#"Cleaned Capacity", "Util", each 
+        if [Staff_Capacity] > 0 then ([Daily_Volume] * ([Avg_MTTP]/60)) / [Staff_Capacity] else 0, type number),
+    
+    #"Kingman" = Table.AddColumn(#"Utilization", "Kingman", each 
+        if [Util] >= 0.98 then 100 
+        else if [Util] <= 0 then 0 
+        else [Util] / (1 - [Util]), type number),
+
+    // Final Error Sweep
+    #"Clean Output" = Table.ReplaceErrorValues(#"Kingman", List.Transform(Table.ColumnNames(#"Kingman"), each {_, 0}))
+in
+    #"Clean Output"
