@@ -1,1 +1,95 @@
-test test
+let
+    // 1. Point to Folder
+    SourcePath = "C:\Users\k111609\Downloads\Raw_Data",
+    Source = Folder.Files(SourcePath),
+    #"Filtered Files" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
+    
+    // 2. Extract Data (Smart Sheet Finder)
+    GetData = (BinaryContent) =>
+        let
+            Workbook = Excel.Workbook(BinaryContent),
+            // Look for 'Complete Data', then 'Data', otherwise grab the last sheet found
+            Sheet = if Table.Contains(Workbook, [Name="Complete Data"]) then Workbook{[Name="Complete Data"]}[Data] 
+                    else if Table.Contains(Workbook, [Name="Data"]) then Workbook{[Name="Data"]}[Data]
+                    else Table.Last(Table.SelectRows(Workbook, each [Kind]="Sheet"))[Data],
+            Headers = Table.PromoteHeaders(Sheet)
+        in
+            Headers,
+
+    #"Added Custom" = Table.AddColumn(#"Filtered Files", "ContentData", each GetData([Content])),
+    #"Combined Tables" = Table.Combine(#"Added Custom"[ContentData]),
+    
+    // 3. STANDARDIZE COLUMNS (The Fix for 'Mean time' vs 'Mean Time')
+    // We rename the specific columns we need to safe names: 'Raw_Date' and 'Raw_MTTR'
+    #"Standardized Columns" = Table.RenameColumns(#"Combined Tables", {
+        {List.First(List.Select(Table.ColumnNames(#"Combined Tables"), each Text.Contains(_, "Occurred Date") or Text.Contains(_, "Created Date"))), "Raw_Date"},
+        {List.First(List.Select(Table.ColumnNames(#"Combined Tables"), each Text.Contains(_, "Mean time to Remediate") or Text.Contains(_, "Mean Time to Remediate"))), "Raw_MTTR"}
+    })
+in
+    #"Standardized Columns"
+
+let
+    // 1. Internal Staffing Load
+    Source_Shifts = Excel.CurrentWorkbook(){[Name="Table1"]}[Content],
+    #"Active Staff" = Table.SelectRows(Source_Shifts, each ([Status] = "Active")),
+    
+    // Capacity Reference (Safe Load)
+    Staffing_Ref = Table.FromRecords({
+        [Day_Name = "Monday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "M", each if Text.Contains([Shift Days] ?? "", "Mon") then [Hours] else 0)[M])],
+        [Day_Name = "Tuesday",   Cap = List.Sum(Table.AddColumn(#"Active Staff", "T", each if Text.Contains([Shift Days] ?? "", "Tue") then [Hours] else 0)[T])],
+        [Day_Name = "Wednesday", Cap = List.Sum(Table.AddColumn(#"Active Staff", "W", each if Text.Contains([Shift Days] ?? "", "Wed") then [Hours] else 0)[W])],
+        [Day_Name = "Thursday",  Cap = List.Sum(Table.AddColumn(#"Active Staff", "Th", each if Text.Contains([Shift Days] ?? "", "Thu") then [Hours] else 0)[Th])],
+        [Day_Name = "Friday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "F", each if Text.Contains([Shift Days] ?? "", "Fri") then [Hours] else 0)[F])],
+        [Day_Name = "Saturday",  Cap = List.Sum(Table.AddColumn(#"Active Staff", "Sa", each if Text.Contains([Shift Days] ?? "", "Sat") then [Hours] else 0)[Sa])],
+        [Day_Name = "Sunday",    Cap = List.Sum(Table.AddColumn(#"Active Staff", "Su", each if Text.Contains([Shift Days] ?? "", "Sun") then [Hours] else 0)[Su])]
+    }),
+
+    // 2. Load Data from Alert_Pull
+    Source_Main = Alert_Pull,
+
+    // Fix Date Parsing (Handle Oct-Dec Data)
+    #"Parsed Dates" = Table.AddColumn(Source_Main, "Master_Date", each 
+        let 
+            val = [Raw_Date],
+            a1 = try Date.From(val) otherwise null,
+            a2 = if a1 = null then try Date.From(Number.From(val)) otherwise null else a1
+        in if a2 = null then #date(1900, 1, 1) else a2, type date),
+    
+    #"Added DayName" = Table.AddColumn(#"Parsed Dates", "Day_Name", each if [Master_Date] = #date(1900, 1, 1) then "Unknown" else Text.Trim(Date.DayOfWeekName([Master_Date])), type text),
+    #"Added Era" = Table.AddColumn(#"Added DayName", "System_Era", each if [Master_Date] >= #date(2025, 9, 1) then "Splunk" else "Chronicle"),
+
+    // ==============================================================
+    // 3. THE 1899 FIX (Mean Time to Remediate)
+    // We force the 1899 Date into a Number (Fraction of Day) and multiply by 1440.
+    // ==============================================================
+    #"Calc MTTR" = Table.AddColumn(#"Added Era", "MTTR_Mins", each 
+        let 
+            rawVal = [Raw_MTTR],
+            // Check if it's null
+            cleanVal = if rawVal = null or rawVal = "" then 0 else rawVal,
+            // Convert to Decimal Day (e.g. 0.0034) then to Minutes
+            numVal = try Number.From(cleanVal) * 1440 otherwise 0
+        in numVal, type number),
+
+    // 4. Merge Staffing
+    #"Merged Staff" = Table.NestedJoin(#"Calc MTTR", {"Day_Name"}, Staffing_Ref, {"Day_Name"}, "StaffInfo", JoinKind.LeftOuter),
+    #"Expanded Staff" = Table.ExpandTableColumn(#"Merged Staff", "StaffInfo", {"Cap"}),
+
+    // 5. Grouping (Using MTTR instead of MTTP)
+    #"Daily Group" = Table.Group(#"Expanded Staff", {"Master_Date", "System_Era"}, {
+        {"Daily_Volume", each Table.RowCount(_), Int64.Type},
+        {"Avg_MTTR", each let avg = List.Average([MTTR_Mins]) in if avg = null then 0 else avg, type number},
+        {"Staff_Capacity", each let mx = List.Max([Cap]) in if mx = null then 0 else mx, type number}
+    }),
+
+    // 6. Kingman/Util using MTTR
+    #"Utilization" = Table.AddColumn(#"Daily Group", "Util", each 
+        if [Staff_Capacity] > 0 then ([Daily_Volume] * ([Avg_MTTR]/60)) / [Staff_Capacity] else 0, type number),
+    
+    #"Kingman" = Table.AddColumn(#"Utilization", "Kingman", each 
+        if [Util] >= 0.98 then 100 else if [Util] <= 0 then 0 else [Util] / (1 - [Util]), type number),
+    
+    // Final Error Sweep
+    #"Clean Output" = Table.ReplaceErrorValues(#"Kingman", List.Transform(Table.ColumnNames(#"Kingman"), each {_, 0}))
+in
+    #"Clean Output"
