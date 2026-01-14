@@ -1,40 +1,7 @@
-let
-    SourcePath = "C:\Users\k111609\Downloads\Raw_Data",
-    Source = Folder.Files(SourcePath),
-    #"Filtered Files" = Table.SelectRows(Source, each ([Extension] = ".xlsx") and not Text.StartsWith([Name], "~$")),
-
-    GetStandardizedTable = (BinaryContent) =>
-        let
-            wb = Excel.Workbook(BinaryContent),
-            sheet = if Table.Contains(wb, [Name="Complete Data"]) then wb{[Name="Complete Data"]}[Data]
-                    else if Table.Contains(wb, [Name="Data"]) then wb{[Name="Data"]}[Data]
-                    else Table.Last(Table.SelectRows(wb, each [Kind]="Sheet"))[Data],
-            headers = Table.PromoteHeaders(sheet),
-            colNames = Table.ColumnNames(headers),
-
-            // 1. DATE
-            DateCol = List.First(List.Select(colNames, each 
-                Text.Contains(_, "occurred", Comparer.OrdinalIgnoreCase) or 
-                Text.Contains(_, "created", Comparer.OrdinalIgnoreCase) or 
-                Text.Contains(_, "date", Comparer.OrdinalIgnoreCase))),
-
-            // 2. REMEDIATE
-            RemCol = List.First(List.Select(colNames, each Text.Contains(_, "remediate", Comparer.OrdinalIgnoreCase))),
-
-            // 3. PICKUP (Targets "Pickup Time" explicitly to find data, ignores "Mean Time")
-            AckCol = List.First(List.Select(colNames, each Text.Contains(_, "Pickup Time", Comparer.OrdinalIgnoreCase))),
-
-            // Rename ONLY the 3 columns needed for math. LEAVE ALL OTHER COLUMNS ALONE.
-            Renamed = Table.RenameColumns(headers, List.RemoveNulls({
-                if DateCol <> null then {DateCol, "Raw_Date"} else null,
-                if RemCol <> null then {RemCol, "Raw_MTTR"} else null,
-                if AckCol <> null then {AckCol, "Raw_MTTP"} else null
-            }))
-        in
-            Renamed, // Returns the FULL table with Site, Analyst, IP, etc.
-
-    #"Processed" = Table.AddColumn(#"Filtered Files", "Data", each GetStandardizedTable([Content])),
-    #"Combined" = Table.Combine(#"Processed"[Data])
-in
-    #"Combined"
-
+can verify that specific case, but one outlier does not skew an entire year of data. The trend is consistent month over month.
+The Reality:
+1. Queue Latency: We consistently miss the 30-minute pickup target by hours. Cases sit stale for a day before anyone can touch them.
+2. High Fidelity Workload: Our False Positive Rate is under 5%. The team is fighting real fires, not noise.
+3. Efficiency: Once we actually engage, we resolve tickets within the 25-hour target.
+Conclusion:
+The team is efficient but maxed out. We do not have a performance issue. We have a capacity issue. The data shows a team that is redlining
