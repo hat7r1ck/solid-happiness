@@ -1,17 +1,17 @@
 #"TypeSafe" =
 let
     prev = #"Safe DateTime Cast",
-    cols = Table.ColumnNames(prev)
+    cols = Table.ColumnNames(prev),
+    FixBool = (v as any) as logical =>
+        if v = null then false
+        else if v is logical then v
+        else
+            let t = Text.Lower(Text.Trim(Text.From(v)))
+            in t = "true" or t = "1" or t = "yes" or t = "y"
 in
     if List.Contains(cols, "Type") then
-        Table.TransformColumns(
-            prev,
-            {{"Type", each if _ = null then false else (try Logical.From(_) otherwise false), type logical}}
-        )
+        Table.TransformColumns(prev, {{"Type", each FixBool(_), type logical}})
     else if List.Contains(cols, "type") then
-        Table.TransformColumns(
-            prev,
-            {{"type", each if _ = null then false else (try Logical.From(_) otherwise false), type logical}}
-        )
+        Table.TransformColumns(prev, {{"type", each FixBool(_), type logical}})
     else
         prev,
