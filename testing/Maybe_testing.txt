@@ -1,1 +1,8 @@
-1231
+let
+  raw = try Text.Lower(Text.Trim(Text.From([site]))) otherwise "",
+  compact = Text.Select(raw, {"a".."z","0".."9"," "})
+in
+  if Text.Contains(compact, "chand") or compact = "az" or compact = "arizona" then "Chandler"
+  else if Text.Contains(compact, "charl") or compact = "nc" or Text.Contains(compact, "north carolina") then "Charlotte"
+  else if compact = "in" or Text.Contains(compact, "india") then "India"
+  else null
