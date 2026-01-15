@@ -1,55 +1,9 @@
-WithKingman =
-    Table.AddColumn(
-        WithSvc,
-        "KingmanBurnoutHours",
-        each
-            let
-                u = try Number.From([Utilization]) otherwise null,
-                s = try Number.From([AvgServiceHours]) otherwise null
-            in
-                if u = null then
-                    null
-                else if s = null then
-                    null
-                else if u >= 0.99 then
-                    null
-                else
-                    (u / (1 - u)) * ((Ca2 + Cs2) / 2) * s,
-        type nullable number
-    ),
-
-WithIndex =
-    Table.AddColumn(
-        WithKingman,
-        "BurnoutIndex",
-        each
-            let
-                u = try Number.From([Utilization]) otherwise null
-            in
-                if u = null then
-                    null
-                else if u >= 0.99 then
-                    null
-                else
-                    u / (1 - u),
-        type nullable number
-    ),
-
-WithFlag =
-    Table.AddColumn(
-        WithIndex,
-        "UtilizationFlag",
-        each
-            let
-                u = try Number.From([Utilization]) otherwise null
-            in
-                if u = null then
-                    "No-capacity"
-                else if u >= UtilRedFloor then
-                    "RED 80%+"
-                else if u >= UtilYellowFloor then
-                    "YELLOW 60-80%"
-                else
-                    "GREEN <60%",
-        type text
+joinDC =
+    Table.NestedJoin(
+        Inc_Something,
+        {"Owner", "ID"},
+        DC,
+        {"Owner", "ID"},
+        "DC",
+        JoinKind.LeftOuter
     ),
