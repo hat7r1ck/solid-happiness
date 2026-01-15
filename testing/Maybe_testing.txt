@@ -1,1 +1,357 @@
-test
+let
+    // -----------------------------
+    // DIALS (edit quickly if needed)
+    // -----------------------------
+    EffortPerCaseHours = 1.0,
+    EffortPerPointHours = 0.5,
+    PickupMinThreshold = 45,
+    CloseMinThreshold = 45,
+    IncludeStatuses = {"Active", "Rotational", "Onboarding"},
+    UtilYellowFloor = 0.60,
+    UtilRedFloor = 0.80,
+
+    // Kingman inputs (SCV)
+    Ca2 = 1.0,
+    Cs2 = 1.0,
+
+    // -----------------------------
+    // INCIDENTS
+    // -----------------------------
+    Inc = Column_IncIn,
+
+    RequiredCols = {
+        "owner",
+        "Escalation",
+        "Escalation To",
+        "MttA_hours",
+        "MttD_hours",
+        "MttPU_hours",
+        "MttClose_hours",
+        "Created Date/Time (UTC)"
+    },
+
+    Inc_Keep =
+        Table.SelectColumns(
+            Inc,
+            List.Intersect({Table.ColumnNames(Inc), RequiredCols}),
+            MissingField.Ignore
+        ),
+
+    GetField = (r as record, f as text) as any =>
+        try Record.Field(r, f) otherwise null,
+
+    Inc_WithKeys =
+        let
+            addDate =
+                Table.AddColumn(
+                    Inc_Keep,
+                    "Created Date",
+                    each
+                        let v = GetField(_, "Created Date/Time (UTC)")
+                        in try Date.From(v) otherwise null,
+                    type date
+                ),
+
+            addDOW =
+                Table.AddColumn(
+                    addDate,
+                    "DayAbbrev",
+                    each
+                        let d = [Created Date]
+                        in if d = null then null else Text.Lower(Date.ToText(d, "ddd", "en-US")),
+                    type text
+                ),
+
+            addType =
+                Table.AddColumn(
+                    addDOW,
+                    "DayType",
+                    each
+                        let d = [Created Date]
+                        in if d = null then null else if Date.DayOfWeek(d, Day.Monday) >= 5 then "WEEKEND" else "WEEKDAY",
+                    type text
+                ),
+
+            normOwner =
+                Table.TransformColumns(
+                    addType,
+                    {{"owner", each if _ = null then null else Text.Lower(Text.Trim(Text.From(_))), type text}}
+                )
+        in
+            normOwner,
+
+    // -----------------------------
+    // STAFFING
+    // -----------------------------
+    ShiftRaw = Excel.CurrentWorkbook(){[Name = "shift"]}[Content],
+
+    ShiftTyped =
+        Table.TransformColumnTypes(
+            ShiftRaw,
+            {
+                {"id", type text},
+                {"Team Name", type text},
+                {"Location", type text},
+                {"Hours", type number},
+                {"Day Type", type text},
+                {"Shift Days", type text},
+                {"Status", type text}
+            }
+        ),
+
+    ShiftNorm =
+        Table.TransformColumns(
+            ShiftTyped,
+            {
+                {"id", each if _ = null then null else Text.Lower(Text.Trim(Text.From(_))), type text},
+                {"Team Name", each if _ = null then null else Text.Trim(Text.From(_)), type text},
+                {"Location", each if _ = null then null else Text.Trim(Text.From(_)), type text},
+                {"Status", each if _ = null then "" else Text.Proper(Text.Trim(Text.From(_))), type text},
+                {"Day Type", each if _ = null then "" else Text.Upper(Text.Trim(Text.From(_))), type text},
+                {"Shift Days", each if _ = null then "" else Text.Lower(Text.Trim(Text.From(_))), type text}
+            }
+        ),
+
+    Shift_Filtered =
+        Table.SelectRows(
+            ShiftNorm,
+            each List.Contains(IncludeStatuses, if [Status] = null then "" else [Status])
+        ),
+
+    DayMap = [
+        monday="mon", mon="mon", mo="mon",
+        tuesday="tue", tue="tue", tu="tue",
+        wednesday="wed", wed="wed", we="wed",
+        thursday="thu", thu="thu", th="thu",
+        friday="fri", fri="fri", fr="fri",
+        saturday="sat", sat="sat", sa="sat",
+        sunday="sun", sun="sun", su="sun"
+    ],
+
+    NormalizeDay = (t as text) as nullable text =>
+        let x = Text.Select(Text.Lower(Text.Trim(t)), {"a".."z"})
+        in Record.FieldOrDefault(DayMap, x, null),
+
+    SplitDays = (s as nullable text) as list =>
+        let
+            raw = if s = null then "" else Text.Lower(s),
+            cleaned =
+                Text.Replace(
+                    Text.Replace(
+                        Text.Replace(
+                            Text.Replace(raw, ".", " "),
+                        ";", " "),
+                    "/", " "),
+                "|", " "),
+            tokens = List.RemoveItems(Text.SplitAny(cleaned, " ,"), {""}),
+            norm = List.RemoveNulls(List.Transform(tokens, each NormalizeDay(_)))
+        in
+            List.Distinct(norm),
+
+    Shift_WithDaysList =
+        Table.AddColumn(
+            Shift_Filtered,
+            "DayAbbrev",
+            each SplitDays([Shift Days]),
+            type list
+        ),
+
+    Shift_DOH = Table.ExpandListColumn(Shift_WithDaysList, "DayAbbrev"),
+
+    Shift_CapacityKeys =
+        Table.SelectColumns(
+            Table.TransformColumns(
+                Shift_DOH,
+                {
+                    {"Day Type", each Text.Upper(Text.Trim(_)), type text},
+                    {"DayAbbrev", each Text.Lower(Text.Trim(_)), type text},
+                    {"Team Name", each if _ = null then null else Text.Trim(_), type text},
+                    {"Location", each if _ = null then null else Text.Trim(_), type text}
+                }
+            ),
+            {"Team Name", "Location", "Day Type", "DayAbbrev", "Hours"}
+        ),
+
+    Cap_ByTLS_DOH =
+        Table.Group(
+            Shift_CapacityKeys,
+            {"Team Name", "Location", "Day Type", "DayAbbrev"},
+            {{"CapacityHours", each List.Sum(List.RemoveNulls([Hours])), type number}}
+        ),
+
+    Cap_Ready = Table.RenameColumns(Cap_ByTLS_DOH, {{"Day Type", "DayType"}}),
+
+    // -----------------------------
+    // JOIN owner -> TEAM/SITE
+    // -----------------------------
+    JoinOwner =
+        Table.NestedJoin(
+            Inc_WithKeys,
+            {"owner"},
+            ShiftNorm,
+            {"id"},
+            "staff",
+            JoinKind.LeftOuter
+        ),
+
+    Inc_TeamSite =
+        Table.ExpandTableColumn(
+            JoinOwner,
+            "staff",
+            {"Team Name", "Location"},
+            {"Team Name", "Location"}
+        ),
+
+    Inc_FillTLS =
+        Table.TransformColumns(
+            Inc_TeamSite,
+            {
+                {"Team Name", each if _ = null or _ = "" then "Unmapped Team" else Text.Trim(Text.From(_)), type text},
+                {"Location", each if _ = null or _ = "" then "Unmapped Site" else Text.Trim(Text.From(_)), type text}
+            }
+        ),
+
+    // -----------------------------
+    // COMPLEXITY + EFFORT
+    // -----------------------------
+    Inc_Cx =
+        Table.AddColumn(
+            Inc_FillTLS,
+            "ComplexityPoints",
+            each
+                let
+                    escVal = GetField(_, "Escalation"),
+                    escToVal = GetField(_, "Escalation To"),
+
+                    esc =
+                        ((try Text.Length(Text.Trim(Text.From(escVal))) otherwise 0) > 0)
+                        or
+                        ((try Text.Length(Text.Trim(Text.From(escToVal))) otherwise 0) > 0),
+
+                    mttPU = GetField(_, "MttPU_hours"),
+                    mttClose = GetField(_, "MttClose_hours"),
+
+                    pickMin = if mttPU = null then null else try Number.From(mttPU) * 60 otherwise null,
+                    closeMin = if mttClose = null then null else try Number.From(mttClose) * 60 otherwise null,
+
+                    pPickup = if pickMin = null then 0 else if pickMin >= PickupMinThreshold then 1 else 0,
+                    pClose = if closeMin = null then 0 else if closeMin >= CloseMinThreshold then 1 else 0,
+                    pEsc = if esc then 1 else 0
+                in
+                    pEsc + pPickup + pClose,
+            Int64.Type
+        ),
+
+    Inc_Effort =
+        Table.AddColumn(
+            Inc_Cx,
+            "CaseEffortHours",
+            each EffortPerCaseHours + Number.From([ComplexityPoints]) * EffortPerPointHours,
+            type number
+        ),
+
+    // -----------------------------
+    // DEMAND
+    // -----------------------------
+    Demand_ByTLS =
+        Table.Group(
+            Inc_Effort,
+            {"Created Date", "Team Name", "Location", "DayType", "DayAbbrev"},
+            {
+                {"Cases", each Table.RowCount(_), Int64.Type},
+                {"DemandHours", each List.Sum(List.RemoveNulls([CaseEffortHours])), type number},
+
+                {"Avg_MttA_h", each
+                    let col = try Table.Column(_, "MttA_hours") otherwise {}
+                    in  if List.Count(col)=0 then null else try List.Average(List.RemoveNulls(col)) otherwise null
+                , type nullable number},
+
+                {"Avg_MttD_h", each
+                    let col = try Table.Column(_, "MttD_hours") otherwise {}
+                    in  if List.Count(col)=0 then null else try List.Average(List.RemoveNulls(col)) otherwise null
+                , type nullable number}
+            }
+        ),
+
+    // -----------------------------
+    // JOIN DEMAND with CAPACITY + KINGMAN
+    // -----------------------------
+    JoinDC =
+        Table.NestedJoin(
+            Demand_ByTLS,
+            {"Team Name", "Location", "DayType", "DayAbbrev"},
+            Cap_Ready,
+            {"Team Name", "Location", "DayType", "DayAbbrev"},
+            "cap",
+            JoinKind.LeftOuter
+        ),
+
+    WithCap = Table.ExpandTableColumn(JoinDC, "cap", {"CapacityHours"}, {"CapacityHours"}),
+
+    WithUtil =
+        Table.AddColumn(
+            WithCap,
+            "Utilization",
+            each if [CapacityHours] = null or [CapacityHours] = 0 then null else [DemandHours] / [CapacityHours],
+            type nullable number
+        ),
+
+    WithSvc =
+        Table.AddColumn(
+            WithUtil,
+            "AvgServiceHours",
+            each if [Cases] = null or [Cases] = 0 then null else [DemandHours] / [Cases],
+            type nullable number
+        ),
+
+    WithKingman =
+        Table.AddColumn(
+            WithSvc,
+            "KingmanBurnoutHours",
+            each
+                let
+                    u = [Utilization],
+                    s = [AvgServiceHours]
+                in
+                    if u = null or s = null or u >= 0.99 then null else (u / (1 - u)) * ((Ca2 + Cs2) / 2) * s,
+            type nullable number
+        ),
+
+    WithIndex =
+        Table.AddColumn(
+            WithKingman,
+            "BurnoutIndex",
+            each
+                let u = [Utilization]
+                in if u = null or u >= 0.99 then null else u / (1 - u),
+            type nullable number
+        ),
+
+    WithFlag =
+        Table.AddColumn(
+            WithIndex,
+            "UtilizationFlag",
+            each
+                if [Utilization] = null then "No-capacity"
+                else if [Utilization] >= UtilRedFloor then "RED 80%+"
+                else if [Utilization] >= UtilYellowFloor then "YELLOW 60-80%"
+                else "GREEN <60%",
+            type text
+        ),
+
+    Result =
+        Table.TransformColumns(
+            WithFlag,
+            {
+                {"DemandHours", each Number.Round(_, 2), type number},
+                {"CapacityHours", each if _ = null then null else Number.Round(_, 2), type nullable number},
+                {"Utilization", each if _ = null then null else Number.Round(_, 3), type nullable number},
+                {"AvgServiceHours", each if _ = null then null else Number.Round(_, 3), type nullable number},
+                {"KingmanBurnoutHours", each if _ = null then null else Number.Round(_, 3), type nullable number},
+                {"BurnoutIndex", each if _ = null then null else Number.Round(_, 3), type nullable number},
+                {"Avg_MttA_h", each if _ = null then null else Number.Round(_, 2), type nullable number},
+                {"Avg_MttD_h", each if _ = null then null else Number.Round(_, 2), type nullable number}
+            }
+        )
+in
+    Result
