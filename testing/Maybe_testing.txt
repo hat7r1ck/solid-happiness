@@ -1,21 +1,4 @@
 
+DELIVERABLE
 
-Disposition: False Positive
-
-Rationale:
-Reviewed Entra ID Protection “Anonymous IP address” alert tied to Pluralsight Learning access. Conditional Access enforced MFA and the sign-in succeeded. The Authenticator device is pre-existing and there is no indication of new device registration or suspicious authentication behavior. Activity is consistent with a user based in India using a common consumer VPN (Proton/VPN exit IP) from a personal device to access an assigned training application with corporate credentials. No indicators of compromise observed.
-
-Why the case exceeded threshold:
-Entity risk threshold was exceeded due to stacked risk contributions from a vendor alert risk mapping plus the Splunk rule WF2025.2774.RC.Azure_AD_Possible_MFA_Fatigue_Attack contributing score in a scenario that does not reflect MFA fatigue (single event context).
-
-Follow-up action:
-Submitted enhancement request to content team to address rule logic/scoring behavior. Enhancement ticket: [TICKET-####] (populate in case tracking field). Case closed after ticket submission and documentation updates completed.
-
-⸻
-
-Case fields (fill consistently)
-	•	Final Disposition: False Positive
-	•	Containment Actions: N/A
-	•	Eradication Actions: N/A
-	•	Major Incident: No
-	•	Content follow-up / enhancement field: [TICKET-####]
+“Validated Entra sign-in telemetry for IP 185.253.98.86 and errorCode 50074 tied to Pluralsight Learning. Four log rows were observed across ~15 seconds, all share the same CorrelationId (47fdf833-9ce9-486c-80…), and reflect endpoint-level calls (SAS:EndAuth, DeviceAuth:ReprocessTls) within a single interactive authentication sequence, not repeated MFA prompts. Conditional Access enforced phish-resistant MFA and the user successfully authenticated. Authenticator device is pre-existing and app access is assigned. Activity aligns with an India-based user using a common consumer VPN from a personal device to access training. Entity threshold breach was driven by stacked risk contributions (generic MDI mapping plus WF2025.2774 fatigue scoring). Enhancement request submitted to review fatigue logic to count distinct auth transactions (CorrelationId) vs raw rows. Closing as False Positive for metrics.”
