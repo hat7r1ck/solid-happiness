@@ -1,1 +1,9 @@
-hdhej
+Import-Module ActiveDirectory
+
+$guid   = '{PUT-GUID-HERE}'   # keep braces
+$dc     = 'devdc01.dev.example.com'
+$baseDN = 'CN=Policies,CN=System,DC=dev,DC=example,DC=com'
+
+Get-ADObject -Server $dc -SearchBase $baseDN -LDAPFilter "(cn=$guid)" `
+  -Properties displayName,gPCFileSysPath,flags,versionNumber,whenChanged,whenCreated |
+  Select-Object displayName,DistinguishedName,gPCFileSysPath,flags,versionNumber,whenCreated,whenChanged
