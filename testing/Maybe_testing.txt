@@ -1,9 +1,137 @@
-Import-Module ActiveDirectory
 
-$guid   = '{PUT-GUID-HERE}'   # keep braces
-$dc     = 'devdc01.dev.example.com'
-$baseDN = 'CN=Policies,CN=System,DC=dev,DC=example,DC=com'
+WithDate =
+    Table.TransformColumns(
+        WithFlag,
+        {{"Created Date", each Date.From(_), type date}}
+    ),
 
-Get-ADObject -Server $dc -SearchBase $baseDN -LDAPFilter "(cn=$guid)" `
-  -Properties displayName,gPCFileSysPath,flags,versionNumber,whenChanged,whenCreated |
-  Select-Object displayName,DistinguishedName,gPCFileSysPath,flags,versionNumber,whenCreated,whenChanged
+WithMonthKey =
+    Table.AddColumn(
+        WithDate,
+        "MonthStart",
+        each Date.StartOfMonth([Created Date]),
+        type date
+    ),
+
+DailyOut =
+    Table.AddColumn(
+        Table.RemoveColumns(WithMonthKey, {"MonthStart"}),
+        "Grain",
+        each "DAY",
+        type text
+    ),
+
+MonthlyAgg =
+    Table.Group(
+        WithMonthKey,
+        {"MonthStart", "Location"},
+        {
+            {"Cases", each List.Sum([Cases]), Int64.Type},
+            {"DemandHours", each List.Sum([DemandHours]), type number},
+            {"CapacityHours", each List.Sum([CapacityHours]), type number},
+
+            // Weighted averages by Cases
+            {"Avg_Pickup_h", each
+                let
+                    t = Table.SelectRows(_, each [Avg_Pickup_h] <> null and [Cases] <> null),
+                    num = List.Sum(List.Transform(Table.ToRecords(t), each _[Avg_Pickup_h] * _[Cases])),
+                    den = List.Sum(t[Cases])
+                in
+                    if den = null or den = 0 then null else num / den,
+                type nullable number
+            },
+
+            {"Avg_Close_h", each
+                let
+                    t = Table.SelectRows(_, each [Avg_Close_h] <> null and [Cases] <> null),
+                    num = List.Sum(List.Transform(Table.ToRecords(t), each _[Avg_Close_h] * _[Cases])),
+                    den = List.Sum(t[Cases])
+                in
+                    if den = null or den = 0 then null else num / den,
+                type nullable number
+            }
+        }
+    ),
+
+MonthlyCalc1 =
+    Table.AddColumn(
+        MonthlyAgg,
+        "Utilization",
+        each
+            let
+                d = FxNum([DemandHours]),
+                c = FxNum([CapacityHours])
+            in
+                if d = null or c = null or c = 0 then null else d / c,
+        type nullable number
+    ),
+
+MonthlyCalc2 =
+    Table.AddColumn(
+        MonthlyCalc1,
+        "AvgServiceHours",
+        each
+            let
+                d = FxNum([DemandHours]),
+                n = FxNum([Cases])
+            in
+                if d = null or n = null or n = 0 then null else d / n,
+        type nullable number
+    ),
+
+MonthlyCalc3 =
+    Table.AddColumn(
+        MonthlyCalc2,
+        "BurnoutIndex",
+        each
+            let u = FxNum([Utilization])
+            in if u = null or u >= 0.99 then null else u / (1 - u),
+        type nullable number
+    ),
+
+MonthlyCalc4 =
+    Table.AddColumn(
+        MonthlyCalc3,
+        "KingmanBurnoutHours",
+        each
+            let
+                u = FxNum([Utilization]),
+                s = FxNum([AvgServiceHours])
+            in
+                if u = null or s = null or u >= 0.99 then null
+                else (u / (1 - u)) * ((Ca2 + Cs2) / 2) * s,
+        type nullable number
+    ),
+
+MonthlyCalc5 =
+    Table.AddColumn(
+        MonthlyCalc4,
+        "UtilizationFlag",
+        each
+            let u = FxNum([Utilization])
+            in
+                if u = null then "No-capacity"
+                else if u >= UtilRedFloor then "RED 80%+"
+                else if u >= UtilYellowFloor then "YELLOW 60-80%"
+                else "GREEN <60%",
+        type text
+    ),
+
+MonthlyOut =
+    Table.AddColumn(
+        Table.RenameColumns(MonthlyCalc5, {{"MonthStart", "Created Date"}}),
+        "Grain",
+        each "MONTH",
+        type text
+    ),
+
+MonthlyOut2 =
+    Table.AddColumn(
+        Table.AddColumn(MonthlyOut, "DayType", each "MONTH", type text),
+        "DayAbbrev",
+        each "month",
+        type text
+    ),
+
+Combined =
+    Table.Combine({DailyOut, MonthlyOut2}),
