@@ -1,16 +1,6 @@
-Inc2a =
+Inc6a =
     Table.AddColumn(
-        Inc2,
-        "Created Date",
-        each
-            let cdt = GetField(_, "Created Date/Time (UTC)")
-            in if cdt = null then null else Date.From(cdt),
-        type nullable date
-    ),
-
-Inc2b =
-    Table.AddColumn(
-        Inc2a,
+        Inc6,
         "Created Hour",
         each
             let cdt = GetField(_, "Created Date/Time (UTC)")
