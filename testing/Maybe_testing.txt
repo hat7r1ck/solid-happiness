@@ -1,9 +1,1 @@
-Inc6a =
-    Table.AddColumn(
-        Inc6,
-        "Created Hour",
-        each
-            let cdt = GetField(_, "Created Date/Time (UTC)")
-            in if cdt = null then null else Time.Hour(DateTime.Time(cdt)),
-        Int64.Type
-    ),
+kjhgkhj
