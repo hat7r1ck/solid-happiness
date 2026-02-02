@@ -1,1 +1,7 @@
-hdhej
+index=sec_extended wf_env="PROD" ("pa:xsoar:server:txt" OR "pa:xsoar_elastic:server:json")
+| eval is_entry_index = if(match(_raw, "wf_prod_3-dmst-common-entry_[0-9]{6}"), "entry_index", "other")
+| eval is_incident_search = if(match(_raw, "/incidents/search"), "incident_search", "other")
+| stats earliest(_time) as first_seen latest(_time) as last_seen count by is_entry_index is_incident_search
+| convert ctime(first_seen) ctime(last_seen)
+| sort is_entry_index is_incident_search
+
