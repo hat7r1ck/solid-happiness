@@ -1,1 +1,9 @@
-kjh
+index=sec_extended wf_env="PROD" source="/var/log/demisto/server.log"
+    ("dmst-common-incident_" OR "dmst-common-entry_")
+| rex "idx=\"(?<es_index>[^\"]+)\""
+| rex max_match=1 "\{(?<json_body>\\"Type\\\":.*)$"
+| eval json_body="{".json_body
+| spath input=json_body
+| table _time host es_index Type name fieldName description caseInsensitive content created modified
+| sort 0 - _time
+
