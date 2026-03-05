@@ -1,0 +1,540 @@
+<form version="1.1" theme="dark">
+  <label>CTFC DDoS Exclusion Manager</label>
+  <description>Centralized management for DDoS alert exclusions. View, add, and update IP, subnet, and ASN exclusions. Replaces manual OneNote tracking.</description>
+
+  <!-- ============================================================
+       INIT: Token setup
+       ============================================================ -->
+  <init>
+    <eval token="time_now">now()</eval>
+    <eval token="time_1y">relative_time($time_now$, "+1y@m")</eval>
+    <eval token="time_1y_string">strftime($time_1y$, "%Y-%m-%d %H:%M")</eval>
+    <set token="error_msg"></set>
+    <unset token="err_expiry"></unset>
+    <set token="expiry"></set>
+    <set token="form.expiry"></set>
+    <set token="asn_subnets"></set>
+    <set token="form.asn_subnets"></set>
+    <set token="asn"></set>
+    <set token="form.asn"></set>
+    <set token="notes"></set>
+    <set token="form.notes"></set>
+    <set token="ticket_no"></set>
+    <set token="form.ticket_no"></set>
+    <set token="new_entity"></set>
+    <set token="form.new_entity"></set>
+    <set token="reason"></set>
+    <set token="form.reason"></set>
+    <set token="value"></set>
+    <set token="form.value"></set>
+    <set token="bit">TRUE</set>
+    <set token="form.bit">TRUE</set>
+    <unset token="add_new_entity"></unset>
+    <unset token="show_asn_subnets_create"></unset>
+    <unset token="update_create_condition"></unset>
+    <set token="view_condition">true</set>
+    <set token="exclusion_type_filter">*</set>
+    <set token="active_filter">TRUE</set>
+    <unset token="has_expiring"></unset>
+    <unset token="err"></unset>
+  </init>
+
+  <!-- ============================================================
+       FIELDSET
+       ============================================================ -->
+  <fieldset autoRun="false" submitButton="true">
+
+    <!-- Action -->
+    <input type="dropdown" token="create_update">
+      <label>Action</label>
+      <change>
+        <condition value="create_update">
+          <set token="update_create_condition">true</set>
+          <unset token="view_condition"></unset>
+        </condition>
+        <condition value="view">
+          <unset token="update_create_condition"></unset>
+          <set token="view_condition">true</set>
+        </condition>
+      </change>
+      <choice value="view">View</choice>
+      <choice value="create_update">Create / Update</choice>
+      <default>view</default>
+      <initialValue>view</initialValue>
+    </input>
+
+    <!-- View mode: Type filter -->
+    <input type="dropdown" token="exclusion_type_filter" depends="$view_condition$">
+      <label>Filter by Type</label>
+      <choice value="*">All</choice>
+      <choice value="IP">IP</choice>
+      <choice value="Subnet">Subnet</choice>
+      <choice value="ASN">ASN</choice>
+      <default>*</default>
+    </input>
+
+    <!-- View mode: Active filter -->
+    <input type="dropdown" token="active_filter" depends="$view_condition$">
+      <label>Filter by Status</label>
+      <choice value="*">All</choice>
+      <choice value="TRUE">Active Only</choice>
+      <choice value="FALSE">Disabled Only</choice>
+      <default>TRUE</default>
+    </input>
+
+    <!-- Create mode: Entity -->
+    <input type="dropdown" token="entity" rejects="$add_new_entity$" depends="$update_create_condition$">
+      <label>Entity</label>
+      <fieldForLabel>entity</fieldForLabel>
+      <fieldForValue>entity</fieldForValue>
+      <search>
+        <query>| inputlookup ddos_exclusions.csv | stats count by entity | fields entity</query>
+        <earliest></earliest>
+        <latest></latest>
+      </search>
+      <choice value="__new">* New Entity *</choice>
+      <change>
+        <condition value="__new">
+          <set token="add_new_entity"></set>
+        </condition>
+        <condition>
+          <unset token="add_new_entity"></unset>
+        </condition>
+      </change>
+    </input>
+
+    <!-- Create mode: New entity text field (shown only when __new selected) -->
+    <input type="text" token="new_entity" depends="$add_new_entity$,$update_create_condition$">
+      <label>New Entity Name</label>
+    </input>
+
+    <!-- Create mode: Exclusion Type -->
+    <input type="dropdown" token="exclusion_type_create" depends="$update_create_condition$">
+      <label>Exclusion Type</label>
+      <choice value="IP">IP</choice>
+      <choice value="Subnet">Subnet / CIDR</choice>
+      <choice value="ASN">ASN</choice>
+      <default>IP</default>
+      <change>
+        <condition value="ASN">
+          <set token="show_asn_subnets_create"></set>
+        </condition>
+        <condition>
+          <unset token="show_asn_subnets_create"></unset>
+        </condition>
+      </change>
+    </input>
+
+    <!-- Create mode: Value -->
+    <input type="text" token="value" depends="$update_create_condition$">
+      <label>Value (IP, CIDR, or ASN e.g. AS16276)</label>
+      <change>
+        <eval token="value">trim(replace(value, "\"", ""))</eval>
+      </change>
+    </input>
+
+    <!-- Create mode: ASN subnets (only when type=ASN) -->
+    <input type="text" token="asn_subnets" depends="$show_asn_subnets_create$,$update_create_condition$">
+      <label>Associated Subnets (comma-separated CIDRs, optional)</label>
+      <default></default>
+    </input>
+
+    <!-- Create mode: Parent ASN (optional, for linking IPs/subnets back to an ASN) -->
+    <input type="text" token="asn" depends="$update_create_condition$">
+      <label>Parent ASN (optional, e.g. AS16276)</label>
+      <default></default>
+    </input>
+
+    <!-- Create mode: Reason -->
+    <input type="text" token="reason" depends="$update_create_condition$">
+      <label>Reason for Exclusion</label>
+    </input>
+
+    <!-- Create mode: Notes -->
+    <input type="text" token="notes" depends="$update_create_condition$">
+      <label>Notes</label>
+    </input>
+
+    <!-- Create mode: Ticket -->
+    <input type="text" token="ticket_no" depends="$update_create_condition$">
+      <label>Ticket # (INC-###, PRB###..)</label>
+    </input>
+
+    <!-- Create mode: Active -->
+    <input type="dropdown" token="bit" depends="$update_create_condition$">
+      <label>Active</label>
+      <choice value="*">ALL</choice>
+      <choice value="TRUE">ENABLED</choice>
+      <choice value="FALSE">DISABLED</choice>
+      <default>TRUE</default>
+      <change>
+        <set token="bit_view">$value$</set>
+        <set token="bit">$value$</set>
+      </change>
+    </input>
+
+    <!-- Create mode: Expiry -->
+    <input type="text" token="expiry" depends="$update_create_condition$">
+      <label>Expiry (YYYY-MM-DD HH:MM) -- optional, defaults to 1 year</label>
+      <change>
+        <condition match="len($value$) > 0 AND NOT (strptime($value$,&quot;%Y-%m-%d %H:%M&quot;)&gt;$time_now$ AND strptime($value$,&quot;%Y-%m-%d %H:%M&quot;)&lt;=$time_1y$)">
+          <set token="error_msg">Expiry must be a future date no more than 1 year from today (format: YYYY-MM-DD HH:MM)</set>
+          <unset token="expiry"></unset>
+          <set token="err">yes</set>
+        </condition>
+        <condition>
+          <eval token="error_msg">replace("$error_msg$","$err_expiry$","")</eval>
+        </condition>
+      </change>
+    </input>
+
+  </fieldset>
+
+  <!-- ============================================================
+       BASE SEARCH: Auto-runs on load, shared by KPI and table panels
+       ============================================================ -->
+  <search id="base_exclusions">
+    <query>| inputlookup ddos_exclusions.csv</query>
+    <earliest>0</earliest>
+    <latest></latest>
+  </search>
+
+  <!-- ============================================================
+       ROW 0: HOW TO USE
+       ============================================================ -->
+  <row>
+    <panel>
+      <html>
+        <div style="padding:12px 16px; background-color:#1a1a1a; border-left:4px solid #006d9c; border-radius:4px; overflow:hidden;">
+          <span style="float:right; margin-left:16px;">
+            <a href="PASTE_CLEAN_DASHBOARD_URL_HERE"
+               style="background-color:#006d9c; color:#ffffff; padding:4px 14px; border-radius:3px; text-decoration:none; font-size:0.9em; font-weight:bold;">
+              Refresh
+            </a>
+          </span>
+          <h3 style="color:#006d9c; margin:0 0 8px 0;">How to Use This Dashboard</h3>
+          <p style="color:#cccccc; margin:0 0 6px 0; font-size:0.9em;">
+            Use the <strong style="color:#ffffff;">Action</strong> dropdown to switch between viewing existing exclusions and adding or updating entries.
+          </p>
+          <p style="color:#cccccc; margin:0 0 6px 0; font-size:0.9em;">
+            <strong style="color:#ffffff;">To add a new exclusion:</strong> Select Create / Update, fill in the fields, then click Submit.
+          </p>
+          <p style="color:#cccccc; margin:0 0 6px 0; font-size:0.9em;">
+            <strong style="color:#ffffff;">To update an existing entry:</strong> Click any row in the Existing Exclusions table -- it will pre-fill the form. Adjust what you need and click Submit.
+          </p>
+          <p style="color:#cccccc; margin:0 0 10px 0; font-size:0.9em;">
+            <strong style="color:#ffffff;">Required fields:</strong> Entity, Type, Value, Reason, Active status. Everything else is optional and can be left blank.
+          </p>
+          <table style="font-size:0.85em; color:#aaaaaa; border-collapse:collapse; width:100%;">
+            <tr>
+              <td style="padding:3px 16px 3px 0; color:#ffffff; white-space:nowrap;">Entity</td>
+              <td style="padding:3px 0;">Who owns or is associated with this exclusion (e.g. Microsoft, OVH SAS, Cloudflare)</td>
+            </tr>
+            <tr>
+              <td style="padding:3px 16px 3px 0; color:#ffffff; white-space:nowrap;">Type</td>
+              <td style="padding:3px 0;">IP for single addresses, Subnet for CIDR blocks, ASN for autonomous system numbers</td>
+            </tr>
+            <tr>
+              <td style="padding:3px 16px 3px 0; color:#ffffff; white-space:nowrap;">Value</td>
+              <td style="padding:3px 0;">The actual IP, CIDR block, or ASN (e.g. 52.239.247.100 / 10.0.0.0/24 / AS16276)</td>
+            </tr>
+            <tr>
+              <td style="padding:3px 16px 3px 0; color:#ffffff; white-space:nowrap;">Parent ASN</td>
+              <td style="padding:3px 0;">Optional. If adding IPs or subnets that belong to a known ASN, enter it here (e.g. AS16276). Leave blank if unknown.</td>
+            </tr>
+            <tr>
+              <td style="padding:3px 16px 3px 0; color:#ffffff; white-space:nowrap;">ASN Subnets</td>
+              <td style="padding:3px 0;">Optional. Only used on ASN-type rows. Comma-separated list of associated CIDRs for reference.</td>
+            </tr>
+            <tr>
+              <td style="padding:3px 16px 3px 0; color:#ffffff; white-space:nowrap;">Expiry</td>
+              <td style="padding:3px 0;">Defaults to 1 year from today. Entries expiring within 30 days appear in the review table automatically.</td>
+            </tr>
+          </table>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- ============================================================
+       ROW 1: KPI PANELS
+       ============================================================ -->
+  <row>
+    <panel>
+      <title>Total Active Exclusions</title>
+      <single>
+        <search base="base_exclusions">
+          <query>| where active="TRUE" | stats count</query>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x006d9c","0x006d9c"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="underLabel">ACTIVE</option>
+        <option name="useColors">1</option>
+        <option name="height">120</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>IP Exclusions</title>
+      <single>
+        <search base="base_exclusions">
+          <query>| where active="TRUE" AND exclusion_type="IP" | stats count</query>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="underLabel">IP</option>
+        <option name="useColors">1</option>
+        <option name="height">120</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Subnet Exclusions</title>
+      <single>
+        <search base="base_exclusions">
+          <query>| where active="TRUE" AND exclusion_type="Subnet" | stats count</query>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="underLabel">SUBNET</option>
+        <option name="useColors">1</option>
+        <option name="height">120</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>ASN Exclusions</title>
+      <single>
+        <search base="base_exclusions">
+          <query>| where active="TRUE" AND exclusion_type="ASN" | stats count</query>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="underLabel">ASN</option>
+        <option name="useColors">1</option>
+        <option name="height">120</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>Expiring Within 30 Days</title>
+      <single>
+        <search base="base_exclusions">
+          <query>| where active="TRUE" AND isnotnull(expiry) AND expiry!=""
+| where expiry &lt;= relative_time(now(), "+30d@d")*1000 AND expiry &gt;= now()*1000
+| stats count</query>
+        </search>
+        <option name="colorBy">value</option>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,1]</option>
+        <option name="underLabel">EXPIRING SOON</option>
+        <option name="useColors">1</option>
+        <option name="height">120</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- ============================================================
+       ROW 2: Validation Errors (shown only on err)
+       ============================================================ -->
+  <row>
+    <panel depends="$err$">
+      <table>
+        <title>Validation Errors</title>
+        <search>
+          <query>| makeresults
+| eval message="$error_msg$"
+| eval message=replace(message, "\$$error_msg\$$", "")
+| makemv delim=";" message</query>
+          <earliest>-4h@m</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ============================================================
+       ROW 3: Existing Exclusions Table
+       Drilldown populates form fields for edit
+       ============================================================ -->
+  <row>
+    <panel>
+      <title>Existing Exclusions</title>
+      <table>
+        <search base="base_exclusions">
+          <query>| search exclusion_type="$exclusion_type_filter$" active="$active_filter$"
+| eval expiry_display=if(isnotnull(expiry) AND expiry!="", strftime(expiry/1000, "%Y-%m-%d %H:%M"), "No Expiry"),
+       submitted_display=strftime(submitted_date/1000, "%Y-%m-%d %H:%M")
+| table entity exclusion_type value asn asn_subnets reason active ticket_no notes expiry_display submitted_by submitted_display
+| rename entity AS "Entity", exclusion_type AS "Type", value AS "Value",
+         asn AS "ASN", asn_subnets AS "ASN Subnets", reason AS "Reason", active AS "Active",
+         ticket_no AS "Ticket", notes AS "Notes", expiry_display AS "Expiry",
+         submitted_by AS "Submitted By", submitted_display AS "Submitted"
+| sort Entity Type Value</query>
+        </search>
+        <option name="count">25</option>
+        <option name="drilldown">cell</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="wrap">true</option>
+        <drilldown>
+          <set token="form.entity">$row.Entity$</set>
+          <set token="form.exclusion_type_create">$row.Type$</set>
+          <set token="form.value">$row.Value$</set>
+          <set token="form.asn_subnets">$row.ASN Subnets$</set>
+          <set token="form.asn">$row.ASN$</set>
+          <set token="form.reason">$row.Reason$</set>
+          <set token="form.notes">$row.Notes$</set>
+          <set token="form.ticket_no">$row.Ticket$</set>
+          <set token="form.bit">$row.Active$</set>
+        </drilldown>
+        <format type="color" field="Active">
+          <colorPalette type="map">{"TRUE":#53a051,"FALSE":#dc4e41}</colorPalette>
+        </format>
+        <format type="color" field="Expiry">
+          <colorPalette type="map">{"No Expiry":#999999}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ============================================================
+       ROW 4: Expiring Soon Detail (always visible, quick review)
+       ============================================================ -->
+  <row>
+    <panel depends="$has_expiring$">
+      <title>Expiring Within 30 Days -- Review Required</title>
+      <table>
+        <search base="base_exclusions">
+          <query>| where active="TRUE" AND isnotnull(expiry) AND expiry!=""
+| where expiry &lt;= relative_time(now(), "+30d@d")*1000 AND expiry &gt;= now()*1000
+| eval days_remaining=round((expiry/1000 - now()) / 86400, 0),
+       expiry_display=strftime(expiry/1000, "%Y-%m-%d %H:%M")
+| table entity exclusion_type value reason expiry_display days_remaining submitted_by ticket_no
+| rename entity AS "Entity", exclusion_type AS "Type", value AS "Value",
+         reason AS "Reason", expiry_display AS "Expiry", days_remaining AS "Days Remaining",
+         submitted_by AS "Owner", ticket_no AS "Ticket"
+| sort Days Remaining</query>
+          <done>
+            <condition match="$job.resultCount$ > 0">
+              <set token="has_expiring">true</set>
+            </condition>
+            <condition>
+              <unset token="has_expiring"></unset>
+            </condition>
+          </done>
+        </search>
+        <option name="count">10</option>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="wrap">true</option>
+        <format type="color" field="Days Remaining">
+          <colorPalette type="minMidMax" maxColor="#53a051" midColor="#f8be34" minColor="#dc4e41"></colorPalette>
+          <scale type="threshold">7,14</scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ============================================================
+       ROW 5: Write panel (create/update mode only)
+       ============================================================ -->
+  <row>
+    <panel depends="$update_create_condition$">
+      <title>New / Updated Entries</title>
+      <table>
+        <search>
+          <query>| makeresults
+| eval entity=if("$entity$"=="__new", if("$new_entity$"=="$new_entity$", "", "$new_entity$"), "$entity$"),
+       exclusion_type="$exclusion_type_create$",
+       value="$value$",
+       asn_subnets=if("$asn_subnets$"=="$asn_subnets$" OR "$asn_subnets$"=="", null(), "$asn_subnets$"),
+       asn=if("$asn$"=="", null(), "$asn$"),
+       reason="$reason$",
+       notes="$notes$",
+       ticket_no="$ticket_no$",
+       submitted_by="$env:user$",
+       submitted_date=tonumber("$time_now$")*1000,
+       expiry=if("$expiry$"=="", null(), round(strptime("$expiry$","%Y-%m-%d %H:%M"))*1000),
+       active=case(
+         upper("$bit$")=="ENABLED","TRUE",
+         upper("$bit$")=="TRUE","TRUE",
+         upper("$bit$")=="DISABLED","FALSE",
+         upper("$bit$")=="FALSE","FALSE",
+         1==1,"TRUE"),
+       comp_key=entity."|".exclusion_type."|".value
+| join type=left comp_key
+    [| inputlookup ddos_exclusions.csv
+     | eval comp_key=entity."|".exclusion_type."|".value, exists=1, fkey=fkey
+     | table comp_key, exists, fkey]
+| fillnull value="-" exists
+| eval fkey=coalesce(fkey, sha256(comp_key)),
+       message=if(exists==1, "UPDATE", "CREATE")
+| where "$bit$"!="*"
+| table entity, exclusion_type, value, asn, asn_subnets, reason, active, notes, ticket_no, expiry, submitted_by, submitted_date, fkey, comp_key, message
+| append
+    [| inputlookup ddos_exclusions.csv
+     | eval comp_key=entity."|".exclusion_type."|".value]
+| dedup comp_key sortby -submitted_date
+| fields - comp_key exists message
+| outputlookup ddos_exclusions.csv
+| eval expiry=strftime(expiry/1000, "%Y-%m-%d %H:%M"),
+       submitted_date=strftime(submitted_date/1000, "%Y-%m-%d %H:%M")</query>
+          <earliest>-4h@m</earliest>
+          <latest>now</latest>
+          <done>
+            <condition match="$job.resultCount$ &gt; 0">
+              <unset token="err"></unset>
+              <unset token="error_msg"></unset>
+              <unset token="entity"></unset>
+              <unset token="exclusion_type_create"></unset>
+              <unset token="value"></unset>
+              <unset token="asn_subnets"></unset>
+              <unset token="asn"></unset>
+              <unset token="reason"></unset>
+              <unset token="notes"></unset>
+              <unset token="add_new_entity"></unset>
+              <unset token="show_asn_subnets_create"></unset>
+              <unset token="form.entity"></unset>
+              <unset token="form.exclusion_type_create"></unset>
+              <unset token="form.value"></unset>
+              <unset token="form.asn_subnets"></unset>
+              <unset token="form.asn"></unset>
+              <unset token="form.reason"></unset>
+              <unset token="form.notes"></unset>
+              <unset token="form.ticket_no"></unset>
+              <unset token="form.bit"></unset>
+            </condition>
+            <condition match="$job.resultCount$ &lt; 1">
+              <set token="error_msg">Please verify all required fields (Entity, Type, Value, Reason) and ensure Active is not set to ALL.</set>
+              <set token="err">yes</set>
+            </condition>
+          </done>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="message">
+          <colorPalette type="map">{"UPDATE":#f8be34,"CREATE":#53a051}</colorPalette>
+        </format>
+        <format type="color" field="active">
+          <colorPalette type="map">{"TRUE":#53a051,"FALSE":#dc4e41}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+</form>
